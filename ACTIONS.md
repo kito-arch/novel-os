@@ -156,69 +156,69 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 
 ### T3.1 — In-memory LLM adapter ✅ Done
 - **Scope:** Implement `LlmClient` backed by a `Map<string, StoryChangeProposals>` fixture store. `extractStructured` returns the matching fixture or a sensible default. `complete` returns canned strings. `chat` returns canned tool-calls from a scripted fixture (used to drive deterministic agent-loop tests in T5.4) — the tool executor (T5.2) runs the calls in-process.
-- **Files:** `src/adapters/memory/llm.ts`
+- **Files:** `tests/mocks/llm.ts`
 - **Deps:** T2.1, T1.6
 - **Acceptance:** Passes a mock contract test (see T4.5).
 
 ### T3.2 — In-memory STT adapter ✅ Done
 - **Scope:** Implement `SpeechToText` that immediately returns a canned transcript. Configurable via constructor injection.
-- **Files:** `src/adapters/memory/stt.ts`
+- **Files:** `tests/mocks/stt.ts`
 - **Deps:** T2.2
 - **Acceptance:** `transcribe` resolves immediately with `{ jobId: 'mock-1' }`.
 
 ### T3.3 — In-memory StoryWorldStore adapter ✅ Done
 - **Scope:** Implement `StoryWorldStore` using `Map<string, StoryWorld>`. `commit` appends events, upserts entities of any type, registers new entity types, upserts facts/knowledge, bumps revision atomically. `getEntity` does linear scan. `queryEvents` filters by predicates. Entity-name lookup matches name + aliases across all types.
-- **Files:** `src/adapters/memory/story-world-store.ts`
+- **Files:** `tests/mocks/story-world-store.ts`
 - **Deps:** T2.3, T1.7, T1.6
 - **Acceptance:** Commit tests from T1.11 can use this adapter as the backing store, including a commit that registers a `starship` type and adds starship entities.
 
 ### T3.4 — In-memory TranscriptStore adapter ✅ Done
 - **Scope:** Implement `TranscriptStore` using `Map<string, Dictation>`. `search` does case-insensitive substring match.
-- **Files:** `src/adapters/memory/transcript-store.ts`
+- **Files:** `tests/mocks/transcript-store.ts`
 - **Deps:** T2.4
 - **Acceptance:** Round-trip save/get works.
 
 ### T3.5 — In-memory JobQueue adapter ✅ Done
 - **Scope:** Implement `JobQueue<T>` that immediately invokes registered handlers on `enqueue`. Useful for synchronous testing of the full pipeline.
-- **Files:** `src/adapters/memory/job-queue.ts`
+- **Files:** `tests/mocks/job-queue.ts`
 - **Deps:** T2.5
 - **Acceptance:** `enqueue` triggers the `onJobCompleted` handler. `getStatus` returns `'completed'` after the handler finishes.
 
-### T3.6 — Memory adapter barrel export ✅ Done
-- **Scope:** Re-export all memory adapters from `src/adapters/memory/index.ts`.
-- **Files:** `src/adapters/memory/index.ts`
+### T3.6 — Mock adapter barrel export ✅ Done
+- **Scope:** Re-export all mock adapters from `tests/mocks/index.ts` (mocks are test doubles — they do **not** live in `src/`; production `src/adapters/` holds only real adapters).
+- **Files:** `tests/mocks/index.ts`
 - **Deps:** T3.1–T3.5
-- **Acceptance:** `import { mockLlm, mockStt } from '@/adapters/memory'` works.
+- **Acceptance:** `import { mockLlm, mockStt } from 'tests/mocks'` works.
 
 ---
 
 ## Phase 4: Composition Root & Service Container (ioctopus)
 
-### T4.1 — AppRegistry extension
+### T4.1 — ✅ Done AppRegistry extension
 - **Scope:** Extend the typed `AppRegistry` in `src/container/registry.ts` to map every port contract + `CONFIG` to its injection token. Consumers resolve typed dependencies via `container.get('...')` — no manual `ServiceContainer` type needed.
 - **Files:** `src/container/registry.ts`, `src/container/index.ts`
 - **Deps:** T2.7, T0.4
 - **Acceptance:** Type compiles; `container.get('LLM')` returns `LlmClient` with no cast.
 
-### T4.2 — buildMemoryContainer for memory adapters
-- **Scope:** Implement `buildMemoryContainer()` that wires all memory adapters into an ioctopus `createContainer<AppRegistry>` (loading them via `createModule` or direct `bind`). Used for tests and dev.
-- **Files:** `src/container/index.ts`
+### T4.2 — ✅ Done buildMemoryContainer for mock adapters
+- **Scope:** Implement `buildMemoryContainer()` that wires all mock adapters into an ioctopus `createContainer<AppRegistry>` (loading them via `createModule` or direct `bind`). Used for tests and dev.
+- **Files:** `tests/mocks/memory-container.ts`
 - **Deps:** T3.6, T4.1
 - **Acceptance:** `buildMemoryContainer().get('STT').submitTranscription(...)` works end-to-end.
 
-### T4.3 — buildContainer for production (stub)
-- **Scope:** Implement `buildContainer(config: AppConfig)` that reads config and binds real adapters. Initially throw `NotImplementedError` for adapters not yet built.
+### T4.3 — ✅ Done buildContainer for production (stub)
+- **Scope:** Implement `buildContainer(config: AppConfig)` that reads config and binds real adapters. Initially throw `NotImplementedError` for adapters not yet built (both real *and* none-default — mock adapters exist only under `tests/mocks`).
 - **Files:** `src/container/index.ts`
 - **Deps:** T4.1, T0.4
 - **Acceptance:** `buildContainer(loadConfig(process.env))` throws descriptive error for missing adapters (not a generic crash).
 
-### T4.4 — getScopedContainer helper
-- **Scope:** Implement a per-request scoped container helper (e.g., using `cache()` in Next.js server actions or request-context pattern).
-- **Files:** `src/container/index.ts`
+### T4.4 — ✅ Done Scoped container isolation
+- **Scope:** Guarantee that concurrent requests/tests get independent container instances so mock adapters don't leak state. Since mocks live in tests, each `buildMemoryContainer()` call binds fresh adapter instances (ioctopus singleton scope is per-container); a per-request memoizing wrapper (`React.cache`) will only be added when the src container has real adapters to memoize (T8.5).
+- **Files:** `tests/mocks/memory-container.ts`
 - **Deps:** T4.2
-- **Acceptance:** Multiple concurrent requests get independent container instances (memory adapters don't leak state between requests in dev).
+- **Acceptance:** Multiple `buildMemoryContainer()` calls produce independent adapters (no shared mutable state between containers).
 
-### T4.5 — Adapter contract test suite
+### T4.5 — ✅ Done Adapter contract test suite
 - **Scope:** Write a generic adapter contract test: given a factory function `() => StoryWorldStore`, run a standard set of tests (create, get, commit, supersede, getEntity). Export as a reusable test helper. Apply to memory adapter.
 - **Files:** `tests/adapters/contract.story-world-store.test.ts`
 - **Deps:** T3.3

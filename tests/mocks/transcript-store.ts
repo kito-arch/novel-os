@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { Clock } from "../../container/clock";
-import type { Dictation, DictationStatus, TranscriptStore } from "../../container/transcript-store";
+import type { Clock } from "@/container/clock";
+import type { Dictation, DictationStatus, TranscriptStore } from "@/container/transcript-store";
 
 // In-memory TranscriptStore for tests/dev. Keyed by dictation id; the
 // provider-job-id lookup is a linear scan (small scale, dev only).

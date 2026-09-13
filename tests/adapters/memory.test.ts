@@ -8,7 +8,7 @@ import {
   createMockStt,
   createMockStoryWorldStore,
   createMockTranscriptStore,
-} from "@/adapters/memory";
+} from "../mocks";
 
 const STORY_ID = randomUUID();
 const DICTATION_ID = randomUUID();

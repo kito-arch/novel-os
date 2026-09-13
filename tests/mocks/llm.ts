@@ -8,8 +8,8 @@ import type {
   ExtractionResult,
   LlmClient,
   ToolCall,
-} from "../../container/llm";
-import type { StoryChangeProposal } from "../../domain/proposals";
+} from "@/container/llm";
+import type { StoryChangeProposal } from "@/domain/proposals";
 
 const VIRTUAL_TOKENS = {
   inputTokens: 1,

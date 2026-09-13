@@ -1,3 +1,4 @@
+export { MockClock } from "./clock";
 export { MockLlm, createMockLlm, mockLlm } from "./llm";
 export type { MockLlmOptions } from "./llm";
 export { MockStt, createMockStt, mockStt } from "./stt";

@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createContainer } from "@evyweb/ioctopus";
 import type { AppRegistry } from "@/container";
-import { buildContainer, createAppModule } from "@/container";
+import { NotImplementedError, buildContainer, createAppModule } from "@/container";
 import { loadConfig } from "@/config";
 
 describe("ioctopus container", () => {
   it("binds CONFIG as a value and resolves it typed", () => {
     const config = loadConfig({});
-    const container = buildContainer(config);
+    const container = createContainer<AppRegistry>();
+    container.load("app", createAppModule(config));
     expect(container.get("CONFIG")).toBe(config);
   });
 
@@ -18,8 +19,7 @@ describe("ioctopus container", () => {
     expect(container.get("CONFIG").STT_PROVIDER).toBe("mock");
   });
 
-  it("buildContainer defaults to process.env", () => {
-    const container = buildContainer();
-    expect(container.get("CONFIG").LLM_CHEAP_MODEL).toBe("gpt-5-nano");
+  it("buildContainer reads process.env but has no production adapters yet", () => {
+    expect(() => buildContainer()).toThrow(NotImplementedError);
   });
 });

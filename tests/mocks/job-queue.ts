@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { JobQueue, JobStatus } from "../../container/job-queue";
+import type { JobQueue, JobStatus } from "@/container/job-queue";
 
 type CompletedHandler = (data: unknown) => Promise<void>;
 type FailedHandler = (data: unknown, error: Error) => Promise<void>;

@@ -143,39 +143,82 @@ ACTIONS.md                         # T2/T3 renumbered; Phase 5/6/7 rewritten (to
 - **JobQueue** is `JobQueue` (non-generic, §6.5/§9.3 shape) but gained `getStatus` + `JobStatus`/`ExtractionJob` from ACTIONS T2.6; handlers are `(data: unknown)` — workers cast to the job type.
 - **`AppRegistry` moved to `src/container/registry.ts`** with 7 tokens (CONFIG/STT/LLM/STORY_WORLD_STORE/TRANSCRIPT_STORE/JOB_QUEUE/CLOCK — no SEMANTIC_STORE); `@/container` re-exports it so `import { AppRegistry, LlmClient, SpeechToText } from '@/container'` works.
 
-## Phase 3: Memory Adapters — COMPLETE (T3.1–T3.6)
+## Phase 3: Mock Adapters — COMPLETE (T3.1–T3.6)
+
+> **Post-review relocation:** after review the mock adapters were moved out of `src/adapters/memory/` into `tests/mocks/` — mocks are test doubles and must never ship in `src/` (real adapters only in `src/adapters/`). Everything below reflects the final location.
 
 ### Acceptance verification (all pass)
 
 - `npm run typecheck` — 0 errors.
 - `npm run lint` — 0 warnings/errors.
-- `npm test` — 10 files, 64 tests, all pass (added `tests/adapters/memory.test.ts`, 11 tests).
+- `npm test` — 12 files, 77 tests, all pass.
 
 ### Files created/changed
 
 ```
-src/adapters/memory/llm.ts               # MockLlm: fixtures (extractStructured) + canned completions + scripted chat (tool-call steps)
-src/adapters/memory/stt.ts               # MockStt: immediate mock-N job id, canned transcript, prefix-validated job lookups
-src/adapters/memory/story-world-store.ts # MockStoryWorldStore: Map-backed, commits via applyCommit, byRevision snapshots,
-                                         # upsertEntityType/getEntityTypes/findEntityTypeByName, findEntityByName (name+aliases,
-                                         # case-insensitive), listEntities(typeId?), attachMedia/getMedia, insertKnowledge/getKnowledge
-src/adapters/memory/transcript-store.ts  # MockTranscriptStore: Map<Dictation> + findDictationByProviderJobId, updateDictation, listDictations
-src/adapters/memory/job-queue.ts         # MockJobQueue: onJobCompleted/onJobFailed/wait/emit + getStatus
-src/adapters/memory/index.ts             # barrel (T3.6)
-src/adapters/index.ts                    # now re-exports ./memory (bootstrap test imports @/adapters)
-tests/adapters/memory.test.ts            # 11 tests (LLM fixtures/script, STT round-trip, commit store T1.11-style, supersede,
-                                         # transcript round-trip, job-queue completed/failed)
+tests/mocks/llm.ts               # MockLlm: fixtures (extractStructured) + canned completions + scripted chat (tool-call steps)
+tests/mocks/stt.ts               # MockStt: immediate mock-N job id, canned transcript, prefix-validated job lookups
+tests/mocks/story-world-store.ts # MockStoryWorldStore: Map-backed, commits via applyCommit, byRevision snapshots,
+                                 # upsertEntityType/getEntityTypes/findEntityTypeByName, findEntityByName (name+aliases,
+                                 # case-insensitive), listEntities(typeId?), attachMedia/getMedia, insertKnowledge/getKnowledge
+tests/mocks/transcript-store.ts  # MockTranscriptStore: Map<Dictation> + findDictationByProviderJobId, updateDictation, listDictations
+tests/mocks/job-queue.ts         # MockJobQueue: onJobCompleted/onJobFailed/wait/emit + getStatus
+tests/mocks/clock.ts             # MockClock (deterministic)
+tests/mocks/index.ts             # mock barrel (T3.6)
+tests/mocks/memory-container.ts  # buildMemoryContainer (T4.2) — wires mocks into an ioctopus container
+src/adapters/index.ts            # empty barrel again (only real adapters here; SystemClock at src/adapters/system-clock.ts from Phase 4)
+tests/adapters/memory.test.ts    # 11 tests (LLM fixtures/script, STT round-trip, commit store T1.11-style, supersede,
+                                 # transcript round-trip, job-queue completed/failed)
 ```
 
 ### Decisions / deviations
 
+- **Mocks live in `tests/mocks/` (test-land), never `src/`** — `src/adapters/` is reserved for real adapters. This was a deliberate post-review relocation; ACTIONS.md T3.1–T3.6 file paths updated accordingly.
 - **`MockStoryWorldStore` reuses the domain reducer:** `commit` runs `applyCommit` (the same validation gate the Postgres adapter enforces) and records an immutable snapshot per revision; `byRevision` reads snapshots. Auxiliary `attachMedia`/`insertKnowledge` live in separate maps merged into reads (`getWorld`/`getEntity`/`findEntityByName`/`listEntities`) so snapshots never drift.
 - **`findEntityByName` is case-insensitive and matches `aliases`** across all types per T2.3/T3.3.
 - **Mock LLM `chat` walks a script of `{ content? , toolCalls? }` steps**; the last step has no tool calls so the T5.4 agent loop terminates. `extractStructured` parses a matching fixture keyed by message substring, else an empty `StoryChangeProposal`. No real provider and no parser retry needed for mocks.
 - **`MockStt` validates `jobId` prefix** (`mock-` by default) in `getJobStatus`/`getTranscript`; unknown job ids return `failed` / throw. `submitTranscription` returns `mock-1`, `mock-2`, … (T3.2).
 - **`MockJobQueue` executes handlers synchronously in-process** (deterministic pipeline tests); if no handler is registered for a job name the job stays `queued`. Handler failure routes to `onJobFailed` and marks the job `failed`.
-- **Contract-test suite (T4.5) deferred to Phase 4** — T3.x verification here uses the direct memory tests plus the T1.11-style commit acceptance; T4.5 remains the formal reusable adapter contract.
+- **Contract-test suite (T4.5) deferred to Phase 4** — T3.x verification here uses the direct mock tests plus the T1.11-style commit acceptance; T4.5 remains the formal reusable adapter contract.
 
 ### Next up
 
-Phase 4 — Composition Root & Service Container (T4.1–T4.5): extend `AppRegistry` (7 tokens + CONFIG), `buildMemoryContainer`, stub `buildContainer`, per-request scoped container, and the reusable adapters contract test suite.
+Phase 4 — Composition Root & Service Container (T4.1–T4.5): extend `AppRegistry` (7 tokens + CONFIG via Phase 2), `buildMemoryContainer` (in `tests/mocks/memory-container.ts`), stub `buildContainer`, container-isolation guarantee, and the reusable adapters contract test suite.
+
+---
+
+## Phase 4: Composition Root & Service Container — COMPLETE (T4.1–T4.5)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — 12 files, 77 tests, all pass (added `tests/container-memory.test.ts`, 4 tests; `tests/adapters/contract.story-world-store.test.ts`, 9 contract tests).
+
+### Files created/changed
+
+```
+tests/mocks/memory-container.ts                  # buildMemoryContainer: wires mock adapters via ioctopus (tests/dev only)
+src/container/index.ts                           # buildContainer (NotImplementedError for every unbuilt adapter) + NotImplementedError
+src/adapters/system-clock.ts                     # SystemClock — real Clock adapter (only real adapters live in src/adapters/)
+src/adapters/index.ts                            # exports SystemClock
+tests/container-memory.test.ts                   # typed resolution, container isolation, NotImplementedError branches
+tests/adapters/support/story-world-store-contract.ts # runStoryWorldStoreContract(store: () => StoryWorldStore) — reusable for Postgres (T14.2)
+tests/adapters/contract.story-world-store.test.ts    # runs the contract against MockStoryWorldStore
+tests/adapters/memory.test.ts, tests/container.test.ts # import paths updated (mocks now live in tests/mocks)
+```
+
+### Decisions / deviations
+
+- **Mocks are not src code.** After review, `src/adapters/memory/` was removed entirely; mock adapters live in `tests/mocks/` and the mock container builder in `tests/mocks/memory-container.ts`. `src/adapters/` contains only a real `SystemClock` until real adapters ship (T8.x, T9.x, T10.x, T11.x).
+- **T4.1 was already satisfied by Phase 2** — `AppRegistry` maps all 7 port tokens + `CONFIG`; this phase proved typed resolution through the fully-wired mock container (no casts): `container.get("STT"): SpeechToText`, etc.
+- **`SystemClock` stays in src (`src/adapters/system-clock.ts`)** as a real adapter for the `CLOCK` token; `MockClock` (deterministic) is a mock in `tests/mocks/clock.ts`.
+- **Mocks bind via `toClass`** (ioctopus default `singleton` scope → one instance per container; separate `buildMemoryContainer()` calls get fully independent instances, so no state leaks between requests/tests — T4.4 acceptance).
+- **`buildContainer(config)` has no fallback to mocks anymore** — it binds CONFIG+CLOCK and throws `NotImplementedError` at binding time for every adapter that isn't implemented (real providers → phase-referencing message; mock providers → note that mocks exist only under `tests/mocks`). T8.5/T9.3/T11.x will fill in real branches. Dev/tests get a working container from `buildMemoryContainer()`.
+- **The per-request `React.cache` "scoped container" (earlier draft) was dropped:** with mocks out of src there is nothing real to memoize per request; the isolation guarantee is what T4.4 actually requires, and it's asserted directly. A scoped wrapper returns when src has real adapters (T8.5).
+- **Contract suite lives in a support module** (`tests/adapters/support/story-world-store-contract.ts` exporting `runStoryWorldStoreContract`) so T14.2 can run the identical suite against Postgres; the `.test.ts` runner applies it to the mock store. Covers: null world/entity/`byRevision` for unknown stories; register-type + add-entities commit with name+alias (case-insensitive) lookup; `appliedFromRevision` guard + commit atomicity (failed commit leaves world untouched); `queryEvents` by setting/participant/date-range; `byRevision` immutability (snapshot ≠ live world, untouched by later commits); supersede flow + unknown-target rejection; registry upsert (same case-insensitive identity on re-upsert) + `listEntities` filter; media/knowledge merged into `getWorld` reads; snapshots unaffected by later auxiliary writes.
+- **Data-driven by the contract:** `MockStoryWorldStore.upsertEntityType` matched by exact name while `findEntityTypeByName` was case-insensitive — re-upserting `"Planet"` after `"planet"` created a duplicate. Now case-insensitive (matching the found-by name semantics Postgres will need).
+
+### Next up
+
+Phase 5 — Application Layer: Story Tool Server & Extraction Agent (T5.1–T5.5): tool catalog (reads + staged writes + `finish`), executor (`validateEntity`/duplicate/contradiction guards, bounded `get_entities`, default 50 / max 200), `buildCommitFromStaged` with server-stamped provenance, `processTranscript` agent loop (≤ 40 tool calls / ≤ 200 fetches; mock-LLM-scripted tests).

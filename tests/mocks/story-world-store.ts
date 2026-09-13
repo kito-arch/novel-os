@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
-import type { Clock } from "../../container/clock";
+import type { Clock } from "@/container/clock";
 import type {
   EventQuery,
   StoryWorldStore,
-} from "../../container/story-world-store";
-import type { Commit, CommitResult } from "../../domain/commits";
-import { applyCommit } from "../../domain/commits";
-import type { Entity, MediaRef } from "../../domain/entities";
-import type { EntityType } from "../../domain/entity-types";
-import type { StoryEvent } from "../../domain/events";
-import type { EntityKnowledge } from "../../domain/knowledge";
-import type { StoryWorld } from "../../domain/story-world";
+} from "@/container/story-world-store";
+import type { Commit, CommitResult } from "@/domain/commits";
+import { applyCommit } from "@/domain/commits";
+import type { Entity, MediaRef } from "@/domain/entities";
+import type { EntityType } from "@/domain/entity-types";
+import type { StoryEvent } from "@/domain/events";
+import type { EntityKnowledge } from "@/domain/knowledge";
+import type { StoryWorld } from "@/domain/story-world";
 
 function identity(): string {
   return randomUUID();
@@ -150,7 +150,9 @@ export class MockStoryWorldStore implements StoryWorldStore {
     const existingWorld = this.worlds.get(storyId);
     const world = existingWorld ?? this.createWorld(storyId);
 
-    const existing = world.entityTypes.find((type) => type.name === def.name);
+    const existing = world.entityTypes.find(
+      (type) => type.name.toLowerCase() === def.name.toLowerCase(),
+    );
     if (existing) {
       const updated: EntityType = {
         ...existing,

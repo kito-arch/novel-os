@@ -4,7 +4,7 @@ import type {
   TranscriptResult,
   TranscriptSegment,
   TranscriptionStatus,
-} from "../../container/stt";
+} from "@/container/stt";
 
 // Deterministic in-memory SpeechToText adapter: submitting returns a fresh
 // mock job id immediately; transcription resolves to a canned transcript.
