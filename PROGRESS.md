@@ -107,6 +107,42 @@ tests/domain/commits.test.ts        # 9 tests
 - **Queue moved to AWS SQS:** `REDIS_URL`/BullMQ removed from config; added optional `AWS_REGION`, `SQS_QUEUE_URL`, `WEBHOOK_SECRET`. AssemblyAI is a single-account, rate-limited API (one key shared across all users) — a queue is still required; SQS is fully managed and the consumer bounds parallelism via `maxConcurrency`. Dev/tests keep the in-memory adapter. Adapter swap only — port contract unchanged.
 - **Source of truth for all of the above:** ACTIONS.md T0.4/T2.4/T8.5/T10.1/T11.x/T12.1/T12.10 and IMPLEMENTATION.md §2/§3/§4/§6.4/§6.5/§9.1/§9.2/§13/§14/§15.
 
+---
+
+## Phase 2: Container Registry (IoC tokens & port contracts) — COMPLETE (T2.1–T2.7)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — 9 files, 53 tests, all pass (added `tests/container-ports.test.ts`, 2 tests: all 7 port tokens resolve via ioctopus + import acceptance).
+
+### Files created/changed
+
+```
+src/container/llm.ts               # ModelTier, LlmClient (complete/extractStructured/chat), CompletionRequest/Result,
+                                   # ExtractionRequest<T>/Result<T>, ChatMessage/ToolCall/ToolDefinition/ChatRequest/ChatResult
+src/container/stt.ts               # SpeechToText, TranscribeRequest (webhookAuth), TranscriptResult, getTranscript
+src/container/story-world-store.ts # commit-based StoryWorldStore + EntityRef/EventQuery/Snapshot
+src/container/transcript-store.ts  # TranscriptStore + Dictation (userId, providerJobId), findDictationByProviderJobId
+src/container/job-queue.ts         # JobQueue (enqueue/onJobCompleted/onJobFailed/getStatus) + JobStatus/ExtractionJob
+src/container/clock.ts             # Clock (now/elapsed)
+src/container/registry.ts          # AppRegistry (7 tokens) + re-exports; moved out of index.ts
+src/container/index.ts             # re-exports registry; createAppModule/buildContainer unchanged (CONFIG bound)
+tests/container-ports.test.ts      # resolves all port tokens through ioctopus with typed stubs
+IMPLEMENTATION.md                  # §6.1–§6.6 reconciled; SemStore removed; chat added; §7/§8 agent-loop rewrite
+ACTIONS.md                         # T2/T3 renumbered; Phase 5/6/7 rewritten (tool server + agent loop); Phase 14 (pgvector) removed
+```
+
+### Decisions / deviations
+
+- **Port contracts follow ACTIONS.md T2.x** (the task spec); IMPLEMENTATION.md §6 was reconciled to match the code, not the other way around. Notably: `StoryWorldStore` is **commit-based** (`commit(commit: Commit): Promise<CommitResult>`, `getWorld`, `byRevision`, `queryEvents`) — the old §6.3 granular CRUD (getStory/createStory/insertFact/…) is gone; `upsertEntityType`/`listEntities` registry ops are retained. Story CRUD was intentionally **not** added (no task depends on it yet; will be added when T12/T8 needs it).
+- **LLM port named per ACTIONS:** `extractStructured<T>` (not §6.2's `extractProposal`), `ModelTier` (not `LLMTier`), with `CompletionRequest`/`ExtractionRequest<T>`/`ExtractionResult<T>`; `schema` is a `ZodType<T>` (zod v4 still exports `ZodType`), so the OpenAI adapter can serialize it to JSON Schema.
+- **STT port extended with** `getTranscript` (> T10.1 + §9.2 use it) and `webhookAuth` on `TranscribeRequest` (echoes `WEBHOOK_SECRET`); the webhook correlation contract (`%providerJobId` ↔ `findDictationByProviderJobId`) is untouched.
+- **Design change (user decision):** extraction moved from single-shot `extractStructured` to a native-`chat` **agent loop over a story tool server** (T5.x). `SemanticStore` / pgvector / embeddings were **removed entirely** — no `SEMANTIC_STORE` token, no semantic search anywhere. Guided fetch is registry-based: the system prompt carries the entity-type registry; `get_entities` returns bounded subsets (default 50 / max 200) enforced server-side; mutations stage in a session and persist only via `applyCommit` → `StoryWorldStore.commit` with server-stamped provenance.
+- **JobQueue** is `JobQueue` (non-generic, §6.5/§9.3 shape) but gained `getStatus` + `JobStatus`/`ExtractionJob` from ACTIONS T2.6; handlers are `(data: unknown)` — workers cast to the job type.
+- **`AppRegistry` moved to `src/container/registry.ts`** with 7 tokens (CONFIG/STT/LLM/STORY_WORLD_STORE/TRANSCRIPT_STORE/JOB_QUEUE/CLOCK — no SEMANTIC_STORE); `@/container` re-exports it so `import { AppRegistry, LlmClient, SpeechToText } from '@/container'` works.
+
 ### Next up
 
-Phase 2 — Database / Persistence (T2.x), once the user un-pauses the build. Do NOT start it autonomously.
+Phase 3 — Memory Adapters (T3.1–T3.6): in-memory LLM/STT/StoryWorldStore/TranscriptStore/JobQueue + barrel. The mock LLM's `chat` scripts canned tool-calls to drive the T5.4 agent-loop tests. Begin when ready.

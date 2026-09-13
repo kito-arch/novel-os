@@ -109,7 +109,7 @@ Derived from IMPLEMENTATION.md. Tasks are ordered by dependency. Each task has a
 The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` registry. Each port is a plain TypeScript contract (no runtime code) whose injection token will be added to `AppRegistry`.
 
 ### T2.1 — LlmClient port
-- **Scope:** Define `ModelTier`, `LlmClient` interface, `CompletionRequest`, `ExtractionRequest<T>`, `ExtractionResult<T>`.
+- **Scope:** Define `ModelTier`, `LlmClient` interface (`complete`, `extractStructured`, and `chat` with **native function calling**: `ToolDefinition`, `ChatMessage`, `ToolCall`, `ChatRequest`, `ChatResult`), `CompletionRequest`, `ExtractionRequest<T>`, `ExtractionResult<T>`. `chat` is the mechanism for the extraction agent loop (T5.4) — the model returns `toolCalls` in the assistant message and the application layer executes them in-process. **No SemanticStore — the extraction agent fetches entities by registry type with bounded limits instead of embedding search.**
 - **Files:** `src/container/llm.ts`
 - **Deps:** T0.3
 - **Acceptance:** Interface compiles. No runtime code.
@@ -132,28 +132,22 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 - **Deps:** T0.3
 - **Acceptance:** Interface compiles.
 
-### T2.5 — SemanticStore port
-- **Scope:** Define `SemanticStore` interface with `index` and `search`. Define `SemanticHit` type.
-- **Files:** `src/container/semantic-store.ts`
-- **Deps:** T0.3
-- **Acceptance:** Interface compiles.
-
-### T2.6 — JobQueue port
-- **Scope:** Define `JobQueue<T>` interface with `enqueue`, `on`, `getStatus`. Define `JobStatus`, `ExtractionJob` types.
+### T2.5 — JobQueue port
+- **Scope:** Define `JobQueue` interface with `enqueue`, `onJobCompleted`, `onJobFailed`, `getStatus`. Define `JobStatus`, `ExtractionJob` types.
 - **Files:** `src/container/job-queue.ts`
 - **Deps:** T0.3
 - **Acceptance:** Interface compiles.
 
-### T2.7 — Clock port
+### T2.6 — Clock port
 - **Scope:** Define `Clock` interface: `now(): Date`, `elapsed(ms: number): boolean`. Simple abstraction for testability.
 - **Files:** `src/container/clock.ts`
 - **Deps:** T0.3
 - **Acceptance:** Interface compiles.
 
-### T2.8 — Registry + container barrel export
+### T2.7 — Registry + container barrel export
 - **Scope:** Re-export all port contracts from `src/container/registry.ts` and compose them into the typed `AppRegistry`. `src/container/index.ts` re-exports the registry, `createAppModule`, and `buildContainer`.
 - **Files:** `src/container/registry.ts`, `src/container/index.ts`
-- **Deps:** T2.1–T2.7
+- **Deps:** T2.1–T2.6
 - **Acceptance:** `import { AppRegistry, LlmClient, SpeechToText } from '@/container'` works.
 
 ---
@@ -161,7 +155,7 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 ## Phase 3: Memory Adapters (for tests and dev)
 
 ### T3.1 — In-memory LLM adapter
-- **Scope:** Implement `LlmClient` backed by a `Map<string, StoryChangeProposals>` fixture store. `extractStructured` returns the matching fixture or a sensible default. `complete` returns canned strings.
+- **Scope:** Implement `LlmClient` backed by a `Map<string, StoryChangeProposals>` fixture store. `extractStructured` returns the matching fixture or a sensible default. `complete` returns canned strings. `chat` returns canned tool-calls from a scripted fixture (used to drive deterministic agent-loop tests in T5.4) — the tool executor (T5.2) runs the calls in-process.
 - **Files:** `src/adapters/memory/llm.ts`
 - **Deps:** T2.1, T1.6
 - **Acceptance:** Passes a mock contract test (see T4.5).
@@ -187,19 +181,13 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 ### T3.5 — In-memory JobQueue adapter
 - **Scope:** Implement `JobQueue<T>` that immediately invokes registered handlers on `enqueue`. Useful for synchronous testing of the full pipeline.
 - **Files:** `src/adapters/memory/job-queue.ts`
-- **Deps:** T2.6
-- **Acceptance:** `enqueue` triggers `on` handler. `getStatus` returns `'completed'` after handler finishes.
-
-### T3.6 — In-memory SemanticStore adapter
-- **Scope:** Implement `SemanticStore` using an array of `{ id, text, metadata }`. `search` returns all entries sorted by simple keyword overlap (no real embedding).
-- **Files:** `src/adapters/memory/semantic-store.ts`
 - **Deps:** T2.5
-- **Acceptance:** `index` then `search` returns the indexed item.
+- **Acceptance:** `enqueue` triggers the `onJobCompleted` handler. `getStatus` returns `'completed'` after the handler finishes.
 
-### T3.7 — Memory adapter barrel export
+### T3.6 — Memory adapter barrel export
 - **Scope:** Re-export all memory adapters from `src/adapters/memory/index.ts`.
 - **Files:** `src/adapters/memory/index.ts`
-- **Deps:** T3.1–T3.6
+- **Deps:** T3.1–T3.5
 - **Acceptance:** `import { mockLlm, mockStt } from '@/adapters/memory'` works.
 
 ---
@@ -209,14 +197,14 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 ### T4.1 — AppRegistry extension
 - **Scope:** Extend the typed `AppRegistry` in `src/container/registry.ts` to map every port contract + `CONFIG` to its injection token. Consumers resolve typed dependencies via `container.get('...')` — no manual `ServiceContainer` type needed.
 - **Files:** `src/container/registry.ts`, `src/container/index.ts`
-- **Deps:** T2.8, T0.4
+- **Deps:** T2.7, T0.4
 - **Acceptance:** Type compiles; `container.get('LLM')` returns `LlmClient` with no cast.
 
 ### T4.2 — buildMemoryContainer for memory adapters
 - **Scope:** Implement `buildMemoryContainer()` that wires all memory adapters into an ioctopus `createContainer<AppRegistry>` (loading them via `createModule` or direct `bind`). Used for tests and dev.
 - **Files:** `src/container/index.ts`
-- **Deps:** T3.7, T4.1
-- **Acceptance:** `buildMemoryContainer().get('STT').transcribe(...)` works end-to-end.
+- **Deps:** T3.6, T4.1
+- **Acceptance:** `buildMemoryContainer().get('STT').submitTranscription(...)` works end-to-end.
 
 ### T4.3 — buildContainer for production (stub)
 - **Scope:** Implement `buildContainer(config: AppConfig)` that reads config and binds real adapters. Initially throw `NotImplementedError` for adapters not yet built.
@@ -238,74 +226,65 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 
 ---
 
-## Phase 5: Application Layer — Extraction Pipeline
+## Phase 5: Application Layer — Story Tool Server & Extraction Agent
 
-### T5.1 — Extraction prompt templates
-- **Scope:** Define system + user prompt templates for the extraction LLM. The system prompt instructs the model to output JSON matching `storyChangeSchema`. The user prompt includes: relevant context (from ContextBuilder) + raw transcript chunk + instruction to return proposed changes.
-- **Files:** `src/application/extraction/prompts.ts`
-- **Deps:** T1.6
-- **Acceptance:** Prompt strings are defined. Snapshot test confirms prompt doesn't change accidentally.
+Design: **no embedding/semantic search.** The extraction agent gets the story's entity-type registry (types + `attributeDefs`) in the system prompt and uses native function calling (`LlmClient.chat`, T2.1) to fetch the entities it needs — bounded, server-side (per-type `limit`, default 50, max 200) — then **stages** mutations. Nothing persists until the agent finishes; then staged ops are validated and applied through `applyCommit` → `StoryWorldStore.commit`. The executor stamps `provenance` on every fact. Contradictions surface as server-side warnings on conflicting tool writes; the agent resolves them with a `supersede_fact` call.
 
-### T5.2 — Entity resolver (type-agnostic)
-- **Scope:** Implement `resolveEntities(proposed: StoryChangeProposals, existing: StoryWorld): StoryChangeProposals` — registers any proposed **new entity types** first, then maps proposed entity names to existing entity IDs via a **single name/alias → ID map across all types**. Handles: exact name match, alias match, no match (new entity), ambiguous match (returns flag for standard-tier disambiguation).
-- **Files:** `src/application/extraction/resolve-entities.ts`
-- **Deps:** T1.6, T1.2
-- **Acceptance:** Unit test: "Sarah" matches existing character; "The Relentless" matches existing starship; "S. Miller" alias resolves; "Unknown Person" flagged as new; a proposal declaring a new `starship` type registers it with `baseKind: 'physical'`.
+### T5.1 — Story tool catalog (definitions)
+- **Scope:** Define the tool catalog (name, description, JSON-Schema `parameters`): reads — `list_entity_types(storyId)`, `get_entities(storyId, entityTypeId, limit?, offset?, query?)`, `get_entity(storyId, entityId)`, `query_events(storyId, entityId?)`; writes (staged) — `stage_create_entity_type`, `stage_create_entity`, `stage_update_entity`, `stage_create_event`, `stage_create_fact`, `stage_create_relationship`, `stage_update_knowledge`, `stage_resolve_open_question`, `supersede_fact`; terminal — `finish`. Reads hit the store directly; writes stage ops in the session (nothing persists until `finish`). `get_entities` honors `limit` server-side (default 50, max 200).
+- **Files:** `src/application/story-tools/definitions.ts`
+- **Deps:** T2.3, T1.2
+- **Acceptance:** Catalog compiles; every tool has a handler in T5.2. Prompt snapshot asserts bounds are declared ("max 200").
 
-### T5.3 — Fact stratifier
-- **Scope:** Implement `stratifyFacts(proposals: StoryChangeProposals, transcriptChunk: string): StoryChangeProposals`. Rule: if the transcript contains explicit language ("Sarah is afraid"), set confidence to `explicit`. Otherwise, set to `inferred`. Never upgrade existing facts.
-- **Files:** `src/application/extraction/stratify.ts`
-- **Deps:** T1.3, T1.6
-- **Acceptance:** Unit test: explicit statement → `explicit`; ambiguous → `inferred`. Existing `explicit` fact not downgraded.
+### T5.2 — Story tool executor
+- **Scope:** Implement `executor(session, toolCall): Promise<ToolResult>` — executes a call against the current staged world. Reads resolve via `StoryWorldStore`; writes validate (unknown entity/type id → corrective error result so the model self-corrects; attributes validated via `validateEntity`; duplicate entity names flagged; conflicting write returns a `contradiction` warning naming the existing fact). `supersede_fact` target must exist. Tracks `toolCalls`/`fetchedEntities` counters.
+- **Files:** `src/application/story-tools/executor.ts`
+- **Deps:** T5.1, T1.6
+- **Acceptance:** Unit test: `get_entities` caps at `limit`; invalid attribute → corrective error; duplicate entity flagged; superseding an unknown fact id rejected.
 
-### T5.4 — Contradiction detector
-- **Scope:** Implement `detectContradictions(proposals: StoryChangeProposals, world: StoryWorld, llm: LlmClient): Promise<Contradiction[]>`. First pass: cheap heuristic (direct attribute conflict). Second pass (if heuristic finds hits): use `standard`-tier LLM to assess severity.
-- **Files:** `src/application/extraction/contradictions.ts`
-- **Deps:** T2.1, T1.6, T1.3
-- **Acceptance:** Unit test: Sarah has green eyes in world, new proposal says blue eyes → contradiction detected. No false positive for new fact about different character.
+### T5.3 — Commit builder from staged ops
+- **Scope:** Implement `buildCommitFromStaged(session, dictationId, chunkIndex)` — converts staged ops to a domain `Commit`, stamps `provenance` (`{ dictationId, textChunk, confidence }`) on every fact, then runs it through `applyCommit` (T1.11) as the single validation gate and persists via `StoryWorldStore.commit`.
+- **Files:** `src/application/story-tools/build-commit.ts`
+- **Deps:** T1.7, T2.3
+- **Acceptance:** Staged create/update/fact ops produce a valid `CommitResult` with correct counts; invalid ops rejected.
 
-### T5.5 — Commit builder
-- **Scope:** Implement `buildCommit(proposals: StoryChangeProposals, world: StoryWorld, transcriptId: string, chunkIndex: number): Commit` — assembles a `Commit` object from resolved, stratified proposals. Registers proposed entity types and validates entity attributes against their `attributeDefs`. Attaches provenance to every fact.
-- **Files:** `src/application/extraction/build-commit.ts`
-- **Deps:** T1.7, T5.2, T5.3, T1.2
-- **Acceptance:** Commit contains proposed new entity types + entities of any type, all events/facts/knowledge carry correct `sourceTranscriptId` and `confidence`.
-
-### T5.6 — processTranscript orchestrator
-- **Scope:** Implement `processTranscript(deps, job: ExtractionJob): Promise<CommitResult>`. Steps:
-  1. Fetch transcript from `TranscriptStore`
-  2. Chunk transcript (if > 4k tokens, split at sentence boundaries)
-  3. For each chunk: build context via `ContextBuilder` (T6.1), call `llm.extractStructured` with extraction prompt, validate via Zod, resolve entities, stratify facts, detect contradictions
-  4. Merge chunk-level proposals into single `StoryChangeProposals`
-  5. Build `Commit`, call `stories.commit()`
-  6. Return `CommitResult` with summary stats
+### T5.4 — Extraction agent loop (processTranscript)
+- **Scope:** Implement `processTranscript(deps, job: ExtractionJob): Promise<CommitResult>`:
+  1. Load transcript + story (`TranscriptStore`, `StoryWorldStore`).
+  2. System prompt = registry (entity types + `attributeDefs`) + tool rules + bounds; user message = transcript (chunked at ~4k tokens).
+  3. Call `llm.chat` with the catalog; for each returned `toolCall` run it via T5.2 and append results as tool messages; repeat (≤ 40 tool calls, ≤ 200 fetches per chunk).
+  4. On the model's final message (no tool calls) → T5.3 build + commit → `CommitResult`.
+  5. Empty transcript → no-op.
 - **Files:** `src/application/extraction/process.ts`
-- **Deps:** T5.1–T5.5, T6.1, T2.1, T2.3, T2.4
-- **Acceptance:** Integration test with memory adapters: feed a canned transcript → `CommitResult` has correct counts. No LLM calls made (mock adapter).
+- **Deps:** T5.1–T5.3, T2.1, T2.3, T2.4
+- **Acceptance:** Integration test with memory adapters: canned transcript → `CommitResult` with correct counts; mock LLM (T3.1) scripts tool calls for determinism; no real provider calls.
 
-### T5.7 — processTranscript unit tests
-- **Scope:** Write Vitest tests for `processTranscript` using memory adapters. Test: normal extraction, empty transcript (no-op), transcript with contradictions, chunking behavior, and a **transcript that introduces a brand-new entity type** (e.g. "The Relentless is a Falcon-class cruiser…") producing a register + entities commit.
+### T5.5 — Extraction agent tests
+- **Scope:** Vitest tests for `processTranscript` (memory adapters + scripted mock LLM): normal extraction; empty transcript (no-op); contradiction → agent supersedes; **brand-new entity type** introduced (e.g. "The Relentless is a Falcon-class cruiser…" registers a `starship` type); tool-call budget exceeded → graceful stop with partial commit.
 - **Files:** `tests/application/extraction/process.test.ts`
-- **Deps:** T5.6, T3.7
+- **Deps:** T5.4, T3.6
 - **Acceptance:** All tests pass.
 
 ---
 
-## Phase 6: Application Layer — Context Builder
+## Phase 6: Application Layer — Bounded Context Assembly (reasoning)
 
-### T6.1 — ContextBuilder
-- **Scope:** Implement `ContextBuilder` class/function that takes a transcript chunk + entity names mentioned, and returns a `ContextPackage`. Pulls: directly mentioned entities (**of any type**, with attributes rendered per their `attributeDefs`), their relationships, recent events (last 10), relevant knowledge claims, open questions, 3–5 semantic hits. Caps total at ~3–4k tokens.
+Design: the extraction path no longer builds context (the agent fetches via tools). This phase provides bounded, schema-rendered context for the **reasoning** features (ask/analyze): match mentions against names + aliases across all types, render attributes per `attributeDefs`, cap tokens. No embeddings, no vector search.
+
+### T6.1 — ContextBuilder (registry-bounded)
+- **Scope:** Implement `buildContext(storyId, mentions: string[]): Promise<ContextPackage>` — resolves mentions against names + aliases across ALL types (bounded to ≤ 10 matches), renders each entity's attributes per its `attributeDefs`, attaches relationships, recent events (last 10), knowledge claims, open questions. Caps output at ~3–4k tokens.
 - **Files:** `src/application/context/builder.ts`
-- **Deps:** T2.3, T2.4, T2.5, T1.5
-- **Acceptance:** Integration test: given a world with 5 characters and 2 starships and a transcript mentioning a character + a starship, returns context containing only those 2 + their relations + the starship's declared attributes. Token cap respected (count words × 1.3 as proxy).
+- **Deps:** T2.3, T1.6
+- **Acceptance:** Integration test: world with 5 characters + 2 starships, mentions of a character + a starship → context contains only those + their relations + declared attributes. Token cap respected (words × 1.3 as proxy).
 
 ### T6.2 — ContextBuilder token cap test
-- **Scope:** Write a test that creates a large fictional world (80k words equivalent) and asserts `ContextBuilder` output stays under 4k tokens.
+- **Scope:** Create a large fictional world (80k words equivalent) and assert `buildContext` output stays under 4k tokens.
 - **Files:** `tests/application/context/builder.test.ts`
 - **Deps:** T6.1
 - **Acceptance:** Test passes. Cost guard verified.
 
 ### T6.3 — Entity mention parser
-- **Scope:** Implement `parseMentions(transcript: string, existingEntities: Entity[]): string[]` — extracts mentioned entity names using cheap LLM or regex/heuristic (first pass: case-sensitive substring match against known names + aliases, **across all entity types**).
+- **Scope:** Implement `parseMentions(text: string, existingEntities: Entity[]): string[]` — regex/heuristic: case-insensitive, longest-match substring against known names + aliases, **across all entity types**.
 - **Files:** `src/application/context/mention-parser.ts`
 - **Deps:** T1.2
 - **Acceptance:** "Sarah walked onto the Relentless bridge" + world containing character `Sarah` and starship `The Relentless` → `["Sarah", "The Relentless"]`. Handles aliases.
@@ -314,8 +293,8 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 
 ## Phase 7: Application Layer — Reasoning
 
-### T7.1 — "Ask my story anything" (RAG)
-- **Scope:** Implement `askStory(deps, storyId, question): Promise<string>`. Builds context via ContextBuilder (question text → semantic search → pull relevant entities/events/knowledge), formats into prompt, calls `standard`-tier LLM, returns answer.
+### T7.1 — "Ask my story anything"
+- **Scope:** Implement `askStory(deps, storyId, question): Promise<string>`. Parse mentions from the question (T6.3), build bounded context via ContextBuilder (T6.1), format into a prompt, call `standard`-tier LLM, return the answer.
 - **Files:** `src/application/reasoning/ask.ts`
 - **Deps:** T6.1, T2.1
 - **Acceptance:** Unit test: given a world where "Sarah knows John killed Michael", question "Does Sarah know who killed Michael?" → answer includes "yes".
@@ -343,7 +322,7 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 ## Phase 8: Database (Drizzle + Postgres)
 
 ### T8.1 — Drizzle schema
-- **Scope:** Define all tables from IMPLEMENTATION.md §6 as Drizzle `pgTable` definitions. Include proper types: `jsonb` for arrays/objects, `uuid` primary keys, `text` for confidence enums, `serial` for revision bumps. Add `pgvector` column type for `embeddings` table (optional extension).
+- **Scope:** Define all tables from IMPLEMENTATION.md §6 as Drizzle `pgTable` definitions. Include proper types: `jsonb` for arrays/objects, `uuid` primary keys, `text` for confidence enums, `serial` for revision bumps.
 - **Files:** `drizzle/schema.ts`, `drizzle/migrations/` (initial)
 - **Deps:** T0.2
 - **Acceptance:** `drizzle-kit generate` produces a migration. Migration applies cleanly to a test Postgres instance.
@@ -355,7 +334,7 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 - **Acceptance:** Passes adapter contract test from T4.5 against a real Postgres database.
 
 ### T8.3 — Postgres TranscriptStore adapter
-- **Scope:** Implement `TranscriptStore` backed by Drizzle. `search` uses Postgres `ILIKE` or `to_tsvector` for full-text search.
+- **Scope:** Implement `TranscriptStore` backed by Drizzle: insert/find dictations (`listDictations`, `findDictationByProviderJobId`).
 - **Files:** `src/adapters/postgres/transcript-store.ts`
 - **Deps:** T2.4, T8.1
 - **Acceptance:** Passes adapter contract test.
@@ -417,15 +396,15 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeout retries built in). Rate limiting to AssemblyAI is done on the **consumer side** with a bounded `maxConcurrency` (SQS has no server-side rate limiter — AssemblyAI is account-rate-limited).
 
 ### T11.1 — SQS JobQueue adapter
-- **Scope:** Implement `JobQueue<T>` backed by AWS SQS. `enqueue` sends a message to the queue configured by `SQS_QUEUE_URL`. `on` registers a consumer (long-polling `ReceiveMessage` loop, or SQS triggers) running with a `maxConcurrency` bound so in-flight extraction + STT submissions stay under AssemblyAI's account rate limit. `getStatus` maps SQS message state / DLQ. Handle: connection errors gracefully (log + fall back to in-memory in dev). Dead-letter queue enabled.
+- **Scope:** Implement `JobQueue` backed by AWS SQS. `enqueue` sends a message to the queue configured by `SQS_QUEUE_URL`. `onJobCompleted` registers a consumer (long-polling `ReceiveMessage` loop, or SQS triggers) running with a `maxConcurrency` bound so in-flight extraction + STT submissions stay under AssemblyAI's account rate limit. `getStatus` maps SQS message state / DLQ. Handle: connection errors gracefully (log + fall back to in-memory in dev). Dead-letter queue enabled.
 - **Files:** `src/adapters/sqs/job-queue.ts`
-- **Deps:** T2.6
-- **Acceptance:** Passes adapter contract test. `enqueue` + `on` round-trip works against LocalStack; adheres to `maxConcurrency` under a burst of jobs.
+- **Deps:** T2.5
+- **Acceptance:** Passes adapter contract test. `enqueue` + `onJobCompleted` round-trip works against LocalStack; adheres to `maxConcurrency` under a burst of jobs.
 
 ### T11.2 — Worker entry point
 - **Scope:** Create `workers/index.ts` that boots an SQS consumer for the `extraction` job type. Worker uses `buildContainer(process.env)` and calls `processTranscript`. Handles graceful shutdown (SIGTERM).
 - **Files:** `workers/index.ts`
-- **Deps:** T11.1, T5.6, T4.3
+- **Deps:** T11.1, T5.4, T4.3
 - **Acceptance:** `npx tsx workers/index.ts` starts and processes a test job.
 
 ### T11.3 — SQS adapter barrel export
@@ -441,7 +420,7 @@ SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeo
 ### T12.1 — POST /api/dictations
 - **Scope:** Accept `multipart/form-data` with audio file + `storyId`. Authenticated user's `userId` comes from the session, not the form. Save audio to temp storage, create a dictation row (`saveDictation({ storyId, userId, status: 'pending' })`), submit to AssemblyAI with a **clean webhook URL (no query params)**, persist the returned `transcript_id` as `providerJobId`, return `{ dictationId, jobId }`. User attribution lives in the DB row, keyed by `transcript_id`, never in the webhook URL.
 - **Files:** `app/api/dictations/route.ts`
-- **Deps:** T2.6, T2.4, T4.4
+- **Deps:** T2.5, T2.4, T4.4
 - **Acceptance:** `curl -F "audio=@test.mp3" -F "storyId=abc" -H "x-user-id: u1" localhost:3000/api/dictations` returns `{ jobId: "..." }`; the dictation row carries `userId = "u1"` and the AssemblyAI `transcript_id` as `providerJobId`.
 
 ### T12.2 — GET /api/dictations/[id]
@@ -495,7 +474,7 @@ SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeo
 ### T12.10 — POST /api/hooks/stt-callback
 - **Scope:** AssemblyAI webhook endpoint. Verify the callback carries `WEBHOOK_SECRET` (AssemblyAI `webhook_auth_header_name`/`value`) → 401 otherwise. **Never trust URL params or the body for user/story identity**: resolve `transcript_id` → dictation via `findDictationByProviderJobId`, then update the dictation, fetch the transcript via `getTranscript`, set `status`, and enqueue the `extraction` job carrying `{ dictationId, storyId }`. Ownership checks (`userId`) are enforced in the route/auth layer.
 - **Files:** `app/api/hooks/stt-callback/route.ts`
-- **Deps:** T10.1, T5.6, T2.4
+- **Deps:** T10.1, T5.4, T2.4
 - **Acceptance:** A callback for an unknown `transcript_id` → 404; a callback without the webhook secret → 401; a valid callback marks the matching user's dictation completed and enqueues extraction.
 
 ---
@@ -552,49 +531,33 @@ SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeo
 
 ---
 
-## Phase 14: pgvector Semantic Adapter
+## Phase 14: Tests & Verification
 
-### T14.1 — Pgvector SemanticStore adapter
-- **Scope:** Implement `SemanticStore` backed by pgvector. `index` generates embeddings (via OpenAI embedding API or local model) and inserts into `embeddings` table. `search` does cosine similarity query.
-- **Files:** `src/adapters/pgvector/semantic-store.ts`
-- **Deps:** T2.5, T8.1
-- **Acceptance:** Passes adapter contract test against test Postgres with pgvector extension.
-
-### T14.2 — Wire pgvector into production container
-- **Scope:** When `DATABASE_URL` is set and pgvector extension is detected, use `pgvectorSemanticStore` in `buildContainer`.
-- **Files:** `src/container/index.ts`
-- **Deps:** T14.1
-- **Acceptance:** ContextBuilder's semantic hits come from pgvector in integration test.
-
----
-
-## Phase 15: Tests & Verification
-
-### T15.1 — End-to-end integration test
+### T14.1 — End-to-end integration test
 - **Scope:** Write a full pipeline test: upload audio (mock STT) → extraction (mock LLM) → verify story world updated → query knowledge → run continuity check. All using memory adapters.
 - **Files:** `tests/integration/full-pipeline.test.ts`
-- **Deps:** T5.6, T6.1, T7.1, T7.2, T7.3
+- **Deps:** T5.4, T6.1, T7.1, T7.2, T7.3
 - **Acceptance:** Test passes. Verifies the complete flow from dictation to story world query.
 
-### T15.2 — Adapter contract tests for Postgres adapters
+### T14.2 — Adapter contract tests for Postgres adapters
 - **Scope:** Run the contract test suite (T4.5) against Postgres `StoryWorldStore` and `TranscriptStore`. Requires test database.
 - **Files:** `tests/adapters/contract.postgres.test.ts`
 - **Deps:** T8.2, T8.3, T4.5
 - **Acceptance:** All contract tests pass against Postgres.
 
-### T15.3 — Cost guard test
+### T14.3 — Cost guard test
 - **Scope:** Create a fictional 80k-word corpus (generated programmatically). Run `ContextBuilder` 100 times with random transcript chunks. Assert average context package stays under 4k tokens.
 - **Files:** `tests/application/context/cost-guard.test.ts`
 - **Deps:** T6.1
 - **Acceptance:** Test passes. Average < 4k tokens.
 
-### T15.4 — Contradiction edge case tests
-- **Scope:** Test contradiction detection with: same fact restated (no contradiction), contradictory facts (contradiction), subtle contradictions (implicit vs explicit), contradictory facts across chapters (anachronism).
-- **Files:** `tests/application/extraction/contradictions.test.ts`
-- **Deps:** T5.4
+### T14.4 — Contradiction edge case tests
+- **Scope:** Test contradiction handling with: same fact restated (no contradiction flagged), contradictory facts (tool warning surfaces), supersede flow (agent calls `supersede_fact` → old claim marked superseded), implicit vs explicit (strata preserved), contradictory facts across chapters (anachronism).
+- **Files:** `tests/application/extraction/supersede.test.ts`
+- **Deps:** T5.5
 - **Acceptance:** All edge cases handled correctly.
 
-### T15.5 — Lint + typecheck pass
+### T14.5 — Lint + typecheck pass
 - **Scope:** Run `npm run lint` and `npx tsc --noEmit` across the entire codebase. Fix all errors.
 - **Files:** All
 - **Deps:** All previous tasks
@@ -602,30 +565,30 @@ SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeo
 
 ---
 
-## Phase 16: Polish & Deployment
+## Phase 15: Polish & Deployment
 
-### T16.1 — Loading and error states
+### T15.1 — Loading and error states
 - **Scope:** Add loading spinners, error boundaries, and toast notifications across all API-consuming pages. Handle network errors, API errors, and empty states gracefully.
 - **Files:** `src/ui/loading.tsx`, `src/ui/error-boundary.tsx`, `src/ui/toast.tsx`
 - **Deps:** T13.x
 - **Acceptance:** No unhandled errors in console. Error states show user-friendly messages.
 
-### T16.2 — Responsive design pass
+### T15.2 — Responsive design pass
 - **Scope:** Ensure all screens work on mobile (375px), tablet (768px), and desktop (1280px). Sidebar collapses to hamburger on mobile. Entity detail becomes full-screen on mobile.
 - **Files:** All UI files
 - **Deps:** T13.x
 - **Acceptance:** Visual inspection on all three breakpoints.
 
-### T16.3 — Deployment config
+### T15.3 — Deployment config
 - **Scope:** Create `Dockerfile` (multi-stage: build + run). Create `docker-compose.yml` with Next.js app + Postgres (the SQS queue is fully managed — no local broker; LocalStack optional for T11 dev). Create `.env.production.example`. Add `scripts/` for DB migration + seeding.
 - **Files:** `Dockerfile`, `docker-compose.yml`, `.env.production.example`, `scripts/seed.ts`
 - **Deps:** T8.x, T11.x
 - **Acceptance:** `docker-compose up` starts all services. App loads at `localhost:3000`. Migrations run automatically.
 
-### T16.4 — README with setup instructions
+### T15.4 — README with setup instructions
 - **Scope:** Write `README.md`: prerequisites, local dev setup, environment variables, database setup, running the app, running tests, architecture overview (link to IMPLEMENTATION.md).
 - **Files:** `README.md`
-- **Deps:** T16.3
+- **Deps:** T15.3
 - **Acceptance:** A new developer can clone and run the app following the README.
 
 ---
@@ -638,12 +601,11 @@ T0.2 → T0.4
 T0.3 → T1.1–T1.8, T2.1–T2.7
 T1.x → T2.x → T3.x → T4.x
 T1.6 → T5.1
-T5.1–T5.5 → T5.6 → T5.7
+T5.1–T5.3 → T5.4 → T5.5
 T6.1–T6.3 → T7.x
-T5.6, T6.1, T7.x → T12.x → T13.x
-T8.x → T14.x
-T11.x → T16.3
-All → T15.x → T16.x
+T5.4, T6.1, T7.x → T12.x → T13.x
+T11.x → T15.3
+All → T14.x → T15.x
 ```
 
 ## Parallelism opportunities

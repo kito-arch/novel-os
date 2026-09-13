@@ -1,10 +1,9 @@
 import { createContainer, createModule } from "@evyweb/ioctopus";
 import type { AppConfig } from "@/config";
 import { loadConfig } from "@/config";
+import type { AppRegistry } from "./registry";
 
-export type AppRegistry = {
-  CONFIG: AppConfig;
-};
+export * from "./registry";
 
 export function createAppModule(config: AppConfig = loadConfig()) {
   const appModule = createModule<AppRegistry>();

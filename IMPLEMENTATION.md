@@ -14,8 +14,8 @@ Key architectural principles:
   - **Dynamic types (everything else):** new entity types are created at runtime by the user (UI/API), chosen by a story-type preset, or proposed on the fly by the extraction LLM — e.g. "these ships are Falcon-class cruisers…" → a `starship` type. Every dynamic type derives from a **base kind** that determines its capabilities: `physical` (concrete things like a starship — supports attaching images) or `abstract` (factions, concepts, plot devices — text only). A story-type preset like `space-opera` seeds `starship` (physical), `planet` (place), `faction` (abstract).
   - All generic logic (resolver, context builder, commit, list/detail UI) operates over `Entity` via its `entityType` + `attributes` — never through `if (entity.kind === 'character')` branches. Only the core flows (character/place/relationship) are allowed to specialize.
 - **Tiered LLM routing.** Cheap models handle high-volume extraction; better models handle contradiction resolution and entity deduplication; the best model is reserved for on-demand analysis (story debugger, character deep-dive).
-- **Selective retrieval.** Never send the entire novel to the LLM. A `ContextBuilder` retrieves only the relevant entities and events for the current dictation chunk.
-- **Hexagonal / Ports & Adapters architecture.** Every external system (STT, LLM, database, job queue, vector store) is behind a TypeScript interface. Swapping providers means writing a new adapter, not changing application code.
+- **Bounded entity fetch.** Never send the entire novel to the LLM. The entity-type registry is sent once in the system prompt; the extraction agent fetches only the subsets it needs per type (server-enforced cap). No embeddings or vector search anywhere.
+- **Hexagonal / Ports & Adapters architecture.** Every external system (STT, LLM, database, job queue) is behind a TypeScript interface. Swapping providers means writing a new adapter, not changing application code.
 
 ---
 
@@ -27,7 +27,6 @@ Key architectural principles:
 | Language | TypeScript (strict mode) |
 | Database | PostgreSQL 16 |
 | ORM | Drizzle ORM (schema-first, type-safe) |
-| Vector Store | pgvector (PostgreSQL extension) |
 | Queue | AWS SQS (fully managed — no Redis/BullMQ broker to run) |
 | STT | AssemblyAI (async transcription API) |
 | LLM | OpenAI API (GPT-5 nano / mini / pro — tiered) |
@@ -104,7 +103,6 @@ novel-os/
 │   │   │   ├── stt.ts                 # SpeechToText port contract
 │   │   │   ├── story-world-store.ts   # StoryWorldStore port contract
 │   │   │   ├── transcript-store.ts    # TranscriptStore port contract
-│   │   │   ├── semantic-store.ts      # SemanticStore port contract (vector search)
 │   │   │   ├── job-queue.ts           # JobQueue port contract
 │   │   │   ├── clock.ts               # Clock port contract
 │   │   │   └── index.ts               # buildContainer / createAppModule (composition root)
@@ -122,9 +120,6 @@ novel-os/
 │   │   │   ├── transcript.ts        # Drizzle-based TranscriptStore
 │   │   │   ├── migrations/
 │   │   │   └── index.ts
-│   │   ├── pgvector/
-│   │   │   ├── embeddings.ts        # pgvector-based EmbeddingStore
-│   │   │   └── index.ts
 │   │   ├── in-memory/
 │   │   │   ├── store.ts             # In-memory store (dev/testing)
 │   │   │   ├── transcript.ts
@@ -137,17 +132,18 @@ novel-os/
 │   │   │   ├── process-dictation.ts  # Orchestrates: audio → STT → extract → commit
 │   │   │   └── index.ts
 │   │   ├── extraction/
-│   │   │   ├── extract-entities.ts   # LLM call: transcript → StoryChangeProposal
-│   │   │   ├── resolve-proposals.ts  # Validate, deduplicate, merge proposals
-│   │   │   ├── commit-proposals.ts   # Apply validated proposals to story world
-│   │   │   ├── prompts.ts            # Extraction prompt templates
+│   │   │   └── process.ts           # processTranscript — agent loop over the tool server (T5.4)
+│   │   ├── story-tools/
+│   │   │   ├── definitions.ts       # Tool catalog (name/description/JSON-Schema) + fetch bounds
+│   │   │   ├── executor.ts          # Executes tool calls against the staged world (T5.2)
+│   │   │   ├── build-commit.ts      # Staged ops → Commit via applyCommit (T5.3)
 │   │   │   └── index.ts
 │   │   ├── context/
-│   │   │   ├── context-builder.ts    # Retrieves relevant context for a transcript chunk
-│   │   │   ├── entity-resolver.ts    # Resolves entity mentions to IDs
+│   │   │   ├── builder.ts           # Registry-bounded context for reasoning (T6.1)
+│   │   │   ├── mention-parser.ts    # Name/alias → mentions across all types (T6.3)
 │   │   │   └── index.ts
 │   │   ├── reasoning/
-│   │   │   ├── ask-story.ts          # "Ask my story anything" RAG pipeline
+│   │   │   ├── ask-story.ts          # "Ask my story anything" (registry-bounded context)
 │   │   │   ├── knowledge-query.ts    # "Does character X know Y?"
 │   │   │   ├── continuity-checker.ts # Story debugger / contradiction finder
 │   │   │   ├── character-analysis.ts # Deep character analysis
@@ -425,18 +421,6 @@ export const contradictions = pgTable('contradictions', {
   action: contradictionActionEnum('action'),
   resolved: integer('resolved').default(0),
   resolvedByOwnerId: text('resolved_by_owner_id'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-});
-
-// Embeddings (for semantic search via pgvector)
-export const embeddings = pgTable('embeddings', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  storyId: uuid('story_id').notNull().references(() => stories.id, { onDelete: 'cascade' }),
-  entityType: text('entity_type').notNull(),  // "dictation", "entity", "event", "fact"
-  entityId: uuid('entity_id').notNull(),
-  chunkText: text('chunk_text').notNull(),
-  // Vector stored as raw array; pgvector extension handles the column type
-  // We'll use a raw SQL column for the vector
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -891,25 +875,48 @@ The pipeline registers `starship` (baseKind `physical` → image uploads become 
 ```typescript
 // src/container/stt.ts
 
-export interface SpeechToText {
-  /**
-   * Submit audio for transcription.
-   * Returns a job ID that can be polled or used with a webhook callback.
-   */
-  submitTranscription(params: {
-    audioBuffer: Buffer;
-    mimeType: string;
-    webhookUrl?: string;  // AssemblyAI calls this when done
-  }): Promise<{ jobId: string }>;
+export type TranscriptionStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
-  /**
-   * Check the status of a transcription job.
-   */
+export interface TranscriptSegment {
+  startMs: number;
+  endMs: number;
+  text: string;
+  confidence?: number;
+}
+
+export interface WebhookAuth {
+  headerName: string;
+  headerValue: string;
+}
+
+export interface TranscribeRequest {
+  audioBuffer: Buffer;
+  mimeType: string;
+  webhookUrl?: string;
+  // Echoed by the provider when the job completes so the callback can be
+  // authenticated (AssemblyAI webhook_auth_header_name/webhook_auth_header_value).
+  webhookAuth?: WebhookAuth;
+}
+
+export interface TranscriptResult {
+  transcript: string;
+  segments?: TranscriptSegment[];
+  durationSeconds?: number;
+}
+
+export interface SpeechToText {
+  // Submit audio for transcription. Returns the provider job id (AssemblyAI
+  // transcript_id) which is persisted as providerJobId for callback correlation.
+  submitTranscription(request: TranscribeRequest): Promise<{ jobId: string }>;
+
   getJobStatus(jobId: string): Promise<{
-    status: 'queued' | 'processing' | 'completed' | 'failed';
+    status: TranscriptionStatus;
     transcript?: string;
     error?: string;
   }>;
+
+  // Fetch the full transcript result by provider job id.
+  getTranscript(jobId: string): Promise<TranscriptResult>;
 }
 ```
 
@@ -918,32 +925,94 @@ export interface SpeechToText {
 ```typescript
 // src/container/llm.ts
 
-import { StoryChangeProposal } from '../domain/proposals';
+import { ZodType } from 'zod';
 
-export type LLMTier = 'cheap' | 'standard' | 'best';
+export type ModelTier = 'cheap' | 'standard' | 'best';
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface CompletionRequest {
+  tier: ModelTier;
+  systemPrompt: string;
+  userMessage: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export interface CompletionResult {
+  text: string;
+  usage: TokenUsage;
+}
+
+// T is the inferred output of the Zod schema. Concrete extraction schemas live
+// in the domain (e.g. StoryChangeProposal) and are passed by the application layer.
+export interface ExtractionRequest<T> {
+  tier: ModelTier;
+  systemPrompt: string;
+  userMessage: string;
+  schema: ZodType<T>;
+}
+
+export interface ExtractionResult<T> {
+  data: T;
+  usage: TokenUsage;
+}
+
+// Native function calling: the extraction agent loop (see §8.1) drives the
+// LLM through multi-turn `chat` calls; the model returns `toolCalls` inside
+// the assistant message and the application layer executes them in-process.
+export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
+
+export interface ChatMessage {
+  role: ChatRole;
+  // Nullable so assistant "tool-use" messages can carry arguments without text.
+  content: string | null;
+  // Present on assistant messages that request tool calls.
+  toolCalls?: ToolCall[];
+  // Present on tool messages: which call this result answers.
+  toolCallId?: string;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;  // JSON-Schema
+}
+
+export interface ChatRequest {
+  messages: ChatMessage[];
+  tools?: ToolDefinition[];
+  tier?: ModelTier;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export interface ChatResult {
+  // The assistant message: final text and/or requested tool calls.
+  message: ChatMessage;
+  usage: TokenUsage;
+}
 
 export interface LlmClient {
-  /**
-   * Generate text completion (used for analysis, chat, etc.)
-   */
-  complete(params: {
-    tier: LLMTier;
-    systemPrompt: string;
-    userMessage: string;
-    temperature?: number;
-    maxTokens?: number;
-  }): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }>;
+  complete(request: CompletionRequest): Promise<CompletionResult>;
 
-  /**
-   * Extract structured data from transcript.
-   * Returns a validated StoryChangeProposal or an error.
-   */
-  extractProposal(params: {
-    tier: LLMTier;
-    systemPrompt: string;
-    userMessage: string;
-    schema: 'story_change_proposal';  // for future extensibility
-  }): Promise<{ proposal: StoryChangeProposal; usage: { inputTokens: number; outputTokens: number } }>;
+  // JSON-mode structured extraction; the adapter validates the response against
+  // request.schema and re-prompts once on a parse failure.
+  extractStructured<T>(request: ExtractionRequest<T>): Promise<ExtractionResult<T>>;
+
+  // Multi-turn chat with native function calling. The adapter does NOT execute
+  // tools — it returns the requested `toolCalls` on the assistant message for
+  // the caller to run and feed back as tool messages.
+  chat(request: ChatRequest): Promise<ChatResult>;
 }
 ```
 
@@ -952,68 +1021,61 @@ export interface LlmClient {
 ```typescript
 // src/container/story-world-store.ts
 
-import { StoryWorld, Entity, EntityType, Fact, StoryEvent, Relationship, EntityKnowledge, Scene, PlotThread, OpenQuestion } from '../domain/story-world';
+import { Commit, CommitResult } from '../domain/commits';
+import { Entity, MediaRef } from '../domain/entities';
+import { EntityType } from '../domain/entity-types';
+import { StoryEvent } from '../domain/events';
+import { EntityKnowledge } from '../domain/knowledge';
+import { StoryWorld } from '../domain/story-world';
+
+export interface EntityRef {
+  id: string;
+  name: string;
+  entityTypeId: string;
+  aliases: string[];
+}
+
+export interface EventQuery {
+  entityId?: string;
+  settingId?: string;
+  from?: Date;
+  to?: Date;
+  limit?: number;
+  offset?: number;
+}
+
+export interface Snapshot {
+  revision: number;
+  entityCount: number;
+  factCount: number;
+  eventCount: number;
+  updatedAt: Date;
+}
 
 export interface StoryWorldStore {
-  // Story CRUD
-  getStory(storyId: string): Promise<StoryWorld>;
-  listStories(ownerId: string): Promise<{ id: string; title: string; updatedAt: Date }[]>;
-  createStory(params: { title: string; synopsis?: string; ownerId: string; storyType?: string }): Promise<string>;
-  deleteStory(storyId: string): Promise<void>;
+  // World access + append-only revision history.
+  getWorld(storyId: string): Promise<StoryWorld | null>;
+  commit(commit: Commit): Promise<CommitResult>;
+  getEntity(storyId: string, entityId: string): Promise<Entity | null>;
+  queryEvents(storyId: string, query?: EventQuery): Promise<StoryEvent[]>;
+  byRevision(storyId: string, revision: number): Promise<StoryWorld | null>;
 
-  // Entity-type registry operations (the dynamic entity model)
+  // Entity-type registry: the dynamic entity model.
   upsertEntityType(storyId: string, def: Omit<EntityType, 'id' | 'createdAt'>): Promise<string>;
   getEntityTypes(storyId: string): Promise<EntityType[]>;
   findEntityTypeByName(storyId: string, name: string): Promise<EntityType | null>;
 
-  // Entity operations — type-agnostic. No per-kind methods, ever.
-  upsertEntity(storyId: string, entity: Omit<Entity, 'id'>): Promise<string>;  // returns ID
-  getEntity(storyId: string, entityId: string): Promise<Entity | null>;
-  findEntityByName(storyId: string, name: string): Promise<Entity | null>;     // matches name + aliases across ALL types
-  listEntities(storyId: string, entityTypeId?: string): Promise<Entity[]>;     // filter by registry type when given
+  // Type-agnostic entity operations. No per-entity-kind methods, ever.
+  findEntityByName(storyId: string, name: string): Promise<Entity | null>;   // matches name + aliases across ALL types
+  listEntities(storyId: string, entityTypeId?: string): Promise<Entity[]>;
 
-  // Media operations (only for base kinds with supportsMedia)
-  attachMedia(entityId: string, media: Omit<MediaRef, 'id' | 'createdAt'>): Promise<string>;  // returns media ID
+  // Media (only for base kinds that support it).
+  attachMedia(entityId: string, media: Omit<MediaRef, 'id' | 'createdAt'>): Promise<string>;
   getMedia(entityId: string): Promise<MediaRef[]>;
 
-  // Fact operations
-  insertFact(storyId: string, fact: Omit<Fact, 'id' | 'createdAt'>): Promise<string>;
-  getFacts(storyId: string, entityId?: string): Promise<Fact[]>;
-  supersedeFact(factId: string, supersededById: string): Promise<void>;
-
-  // Event operations
-  insertEvent(storyId: string, event: Omit<StoryEvent, 'id' | 'createdAt'>): Promise<string>;
-  getEvents(storyId: string, params?: { entityId?: string; limit?: number; offset?: number }): Promise<StoryEvent[]>;
-
-  // Relationship operations
-  insertRelationship(storyId: string, rel: Omit<Relationship, 'id' | 'createdAt'>): Promise<string>;
-  getRelationships(storyId: string, entityId?: string): Promise<Relationship[]>;
-  supersedeRelationship(relId: string, supersededById: string): Promise<void>;
-
-  // Entity Knowledge operations (generalized: any entity can "know")
-  insertKnowledge(storyId: string, k: Omit<EntityKnowledge, 'id' | 'createdAt'>): Promise<string>;
+  // Knowledge: any entity type can "know".
+  insertKnowledge(storyId: string, knowledge: Omit<EntityKnowledge, 'id' | 'createdAt'>): Promise<string>;
   getKnowledge(storyId: string, subjectEntityId: string): Promise<EntityKnowledge[]>;
-
-  // Scene operations
-  insertScene(storyId: string, scene: Omit<Scene, 'id' | 'createdAt'>): Promise<string>;
-  getScenes(storyId: string): Promise<Scene[]>;
-
-  // Plot Thread operations
-  upsertPlotThread(storyId: string, pt: Omit<PlotThread, 'id' | 'createdAt' | 'updatedAt'>): Promise<string>;
-  getPlotThreads(storyId: string): Promise<PlotThread[]>;
-
-  // Open Question operations
-  insertOpenQuestion(storyId: string, oq: Omit<OpenQuestion, 'id' | 'createdAt'>): Promise<string>;
-  getOpenQuestions(storyId: string, onlyUnresolved?: boolean): Promise<OpenQuestion[]>;
-  resolveOpenQuestion(oqId: string, resolvedInDictationId: string): Promise<void>;
-
-  // Contradiction operations
-  insertContradiction(params: {
-    storyId: string;
-    existingFactId?: string;
-    newFactDescription: string;
-    existingFactDescription: string;
-  }): Promise<string>;
 }
 ```
 
@@ -1078,43 +1140,22 @@ export interface TranscriptStore {
 ```typescript
 // src/container/job-queue.ts
 
+export type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+
+export interface ExtractionJob {
+  dictationId: string;
+  storyId: string;
+  transcript: string;
+}
+
 // Provider-agnostic: production adapter is AWS SQS (fully managed), dev/test uses
 // the in-memory adapter. SQS has no server-side rate limiter, so production wiring
 // bounds the consumer's maxConcurrency to stay under AssemblyAI's account rate limit.
 export interface JobQueue {
   enqueue<T>(jobName: string, data: T): Promise<{ jobId: string }>;
-  onJobCompleted(jobName: string, handler: (data: any) => Promise<void>): void;
-  onJobFailed(jobName: string, handler: (data: any, error: Error) => Promise<void>): void;
-}
-```
-
-### 6.6 Embedding / Vector Store Port
-
-```typescript
-// src/container/semantic-store.ts
-
-export interface EmbeddingStore {
-  upsert(params: {
-    storyId: string;
-    entityType: string;
-    entityId: string;
-    chunkText: string;
-    embedding: number[];
-  }): Promise<string>;
-
-  search(params: {
-    storyId: string;
-    queryEmbedding: number[];
-    topK: number;
-    entityTypes?: string[];
-  }): Promise<Array<{
-    entityId: string;
-    entityType: string;
-    chunkText: string;
-    score: number;
-  }>>;
-
-  deleteByEntity(entityType: string, entityId: string): Promise<void>;
+  onJobCompleted(jobName: string, handler: (data: unknown) => Promise<void>): void;
+  onJobFailed(jobName: string, handler: (data: unknown, error: Error) => Promise<void>): void;
+  getStatus(jobId: string): Promise<JobStatus>;
 }
 ```
 
@@ -1131,7 +1172,6 @@ import { LlmClient } from './llm';
 import { SpeechToText } from './stt';
 import { StoryWorldStore } from './story-world-store';
 import { TranscriptStore } from './transcript-store';
-import { SemanticStore } from './semantic-store';
 import { JobQueue } from './job-queue';
 import { Clock } from './clock';
 
@@ -1141,7 +1181,6 @@ export type AppRegistry = {
   LLM: LlmClient;
   STORY_WORLD_STORE: StoryWorldStore;
   TRANSCRIPT_STORE: TranscriptStore;
-  SEMANTIC_STORE: SemanticStore;
   JOB_QUEUE: JobQueue;
   CLOCK: Clock;
 };
@@ -1170,7 +1209,6 @@ export function buildContainer(): Container {
   container.bind('LLM').toHigherOrderFunction(makeLlm, ['CONFIG']);
   container.bind('STORY_WORLD_STORE').toHigherOrderFunction(makeStoryWorldStore, ['CONFIG']);
   container.bind('TRANSCRIPT_STORE').toHigherOrderFunction(makeTranscriptStore, ['CONFIG']);
-  container.bind('SEMANTIC_STORE').toHigherOrderFunction(makeSemanticStore, ['CONFIG']);
   container.bind('JOB_QUEUE').toHigherOrderFunction(makeJobQueue, ['CONFIG']);
   container.bind('CLOCK').toFunction(systemClock);
   return container;
@@ -1192,7 +1230,7 @@ const stt = container.get('STT');   // SpeechToText
 const store = container.get('STORY_WORLD_STORE');  // StoryWorldStore
 ```
 
-> In the §8+ application examples, `container.stt` / `container.llm` / `container.store` / `container.transcriptStore` / `container.queue` / `container.embeddings` are shorthand for `container.get('STT')` / `container.get('LLM')` / `container.get('STORY_WORLD_STORE')` / `container.get('TRANSCRIPT_STORE')` / `container.get('JOB_QUEUE')` / `container.get('SEMANTIC_STORE')`.
+> In the §8+ application examples, `container.stt` / `container.llm` / `container.store` / `container.transcriptStore` / `container.queue` are shorthand for `container.get('STT')` / `container.get('LLM')` / `container.get('STORY_WORLD_STORE')` / `container.get('TRANSCRIPT_STORE')` / `container.get('JOB_QUEUE')`. There is no semantic store — extraction uses bounded registry fetches; reasoning uses the ContextBuilder (§8.2).
 
 ---
 
@@ -1200,513 +1238,222 @@ const store = container.get('STORY_WORLD_STORE');  // StoryWorldStore
 
 ## 8. Application Services
 
-### 8.1 Extraction Pipeline (the core orchestrator)
+### 8.1 Story Tool Catalog (definitions)
+
+Design: **no embedding/semantic search.** The extraction agent is driven by native function calling over a tool catalog. Reads resolve through `StoryWorldStore`; writes **stage** ops in a session that persists nothing until `finish`. The catalog is a data table — a future MCP server exposes the same catalog via `tools/list` + `tools/call`.
 
 ```typescript
-// src/application/extraction/extract-entities.ts
+// src/application/story-tools/definitions.ts
 
-import type { Container } from '../../container';
-import { StoryChangeProposalSchema, StoryChangeProposal } from '../../core/domain/proposals';
+import type { ToolDefinition } from '../../container/llm';
 
-const EXTRACTION_SYSTEM_PROMPT = `You are an expert narrative analyst. Given a transcript from a novelist's dictation, extract structured story data.
+export const ENTITY_FETCH_LIMIT = 50;  // default per-type fetch
+export const ENTITY_FETCH_MAX = 200;   // hard cap, enforced by the executor
 
-IMPORTANT RULES:
-1. Only extract what is EXPLICITLY stated or STRONGLY implied in the text.
-2. For every extracted fact, classify its confidence:
-   - "explicit": directly stated in the text
-   - "implied": strongly suggested but not directly stated
-   - "inferred": your interpretation (flag it as such)
-3. Output valid JSON matching the provided schema.
-4. If the text contains contradictions with previously known facts, list them in the contradictions array.
-5. Track what each entity KNOWS (not just characters — an AI, a faction, a sentient starship can all "know" things) vs what is merely true in the story world.
-6. If you encounter a recurring type of thing that is NOT already in the story's existing entity types (e.g. starships, alien species, factions), propose a new entity type in the `entityTypes` array with appropriate attribute definitions, then tag the relevant entities with that type.
-7. Identify open questions the writer has left unanswered.
+export const STORY_TOOLS: ToolDefinition[] = [
+  {
+    name: 'list_entity_types',
+    description: 'List the story\'s entity-type registry (types + attributeDefs).',
+    parameters: { type: 'object', properties: { storyId: { type: 'string' } } },
+  },
+  {
+    name: 'get_entities',
+    description: 'Fetch entities of one type, bounded (default 50, max 200).',
+    parameters: { type: 'object', properties: { storyId: { type: 'string' }, entityTypeId: { type: 'string' }, limit: { type: 'integer' }, offset: { type: 'integer' }, query: { type: 'string' } } },
+  },
+  {
+    name: 'get_entity',
+    description: 'Fetch one entity by id.',
+    parameters: { type: 'object', properties: { storyId: { type: 'string' }, entityId: { type: 'string' } } },
+  },
+  {
+    name: 'query_events',
+    description: 'Fetch events, optionally filtered to one entity.',
+    parameters: { type: 'object', properties: { storyId: { type: 'string' }, entityId: { type: 'string' } } },
+  },
+  {
+    name: 'stage_create_entity_type',   // + stage_create_entity, stage_update_entity,
+    description: 'Stage a write. Nothing persists until the finish tool is called.',
+    parameters: { type: 'object', properties: { storyId: { type: 'string' } } },
+  },
+  // ... stage_create_event, stage_create_fact, stage_create_relationship,
+  //     stage_update_knowledge, stage_resolve_open_question, supersede_fact
+  { name: 'finish', description: 'End the session and commit all staged writes.', parameters: {} },
+];
+```
 
-You are NOT writing the story. You are building a structured knowledge representation of the narrator's dictation.`;
+### 8.2 Tool Executor (staged operations)
 
-export async function extractFromTranscript(
-  container: Container,
-  params: {
-    transcript: string;
-    storyId: string;
-    existingContext: string;  // relevant existing entities/events for context
-  }
-): Promise<{ proposal: StoryChangeProposal; usage: { inputTokens: number; outputTokens: number } }> {
-  const userMessage = buildExtractionPrompt(params.transcript, params.existingContext);
+```typescript
+// src/application/story-tools/executor.ts
 
-  const result = await container.llm.extractProposal({
-    tier: 'cheap',  // high-volume extraction uses cheap tier
-    systemPrompt: EXTRACTION_SYSTEM_PROMPT,
-    userMessage,
-    schema: 'story_change_proposal',
-  });
-
-  return result;
+export interface ToolSession {
+  storyId: string;
+  dictationId: string;
+  chunkIndex: number;
+  staged: StagedOps;                    // in-memory, session-scoped
+  contradictions: Contradiction[];      // server-side warnings
+  toolCalls: number;                    // budget counter
+  fetchedEntities: number;              // budget counter
 }
 
-function buildExtractionPrompt(transcript: string, existingContext: string): string {
-  return `## Existing Story Context
-${existingContext || '(No existing context — this appears to be the first dictation.)'}
+export async function executor(session: ToolSession, call: ToolCall): Promise<ToolResult> {
+  session.toolCalls++;
+  const { storyId } = session;
 
-## New Transcript to Analyze
-${transcript}
-
-## Instructions
-Extract all story elements from the transcript above. For each entity, determine the appropriate confidence level. If you detect any contradictions with the existing context, list them in the contradictions array.`;
+  switch (call.name) {
+    case 'get_entities': {
+      const { entityTypeId, limit = ENTITY_FETCH_LIMIT } = call.arguments;
+      const n = Math.min(Number(limit), ENTITY_FETCH_MAX);   // bounded server-side
+      session.fetchedEntities += n;
+      const all = await store.listEntities(storyId, entityTypeId);
+      return { ok: true, data: all.slice(0, n) };
+    }
+    case 'stage_create_fact': {
+      // entity ids are validated against the staged + committed world first.
+      // A write that conflicts with an existing fact returns a `contradiction`
+      // warning naming the existing fact — the model can then read it and call
+      // supersede_fact explicitly.
+      return { ok: true, data: { staged: true, warning: contradiction ?? null } };
+    }
+    case 'supersede_fact': {
+      const exists = stagedOrWorldHasFact(session, call.arguments.factId);
+      if (!exists) return { ok: false, error: 'fact not found', data: null };  // corrective error
+      session.staged.supersededFacts.push(call.arguments.factId);
+      return { ok: true, data: { staged: true } };
+    }
+    default:
+      return { ok: false, error: `Unknown tool: ${call.name}`, data: null };
+  }
 }
 ```
 
-### 8.2 Context Builder (Selective Retrieval)
+### 8.3 Commit Builder (staged → applyCommit)
+
+The session's staged writes — entity types, entities, attributes, events, facts, relationships, knowledge, superseded facts, resolved open questions — are folded into a domain `Commit`. `applyCommit` is the single validation gate; `StoryWorldStore.commit` persists it. Provenance is stamped **server-side** (`dictationId` / text chunk / confidence), never by the model.
 
 ```typescript
-// src/application/context/context-builder.ts
+// src/application/story-tools/build-commit.ts
 
-import type { Container } from '../../container';
-
-export interface RelevantContext {
-  entityTypes: Array<{ name: string; pluralName: string; attributeDefs: AttributeDef[] }>;
-  entities: Array<{ id: string; entityType: string; name: string; aliases: string[]; attributes: Record<string, AttributeValue> }>;
-  recentEvents: Array<{ title: string; description: string | null; participants: string[] }>;
-  relationships: Array<{ from: string; to: string; kind: string; details: string | null }>;
-  openQuestions: string[];
-  // Token budget used so far (approximate)
-  tokenEstimate: number;
-}
-
-const TOKEN_BUDGET = 3000;  // keep context under ~3k tokens for extraction
-
-export async function buildRelevantContext(
-  container: Container,
-  params: {
-    storyId: string;
-    transcriptChunk: string;
-  }
-): Promise<RelevantContext> {
-  const { storyId, transcriptChunk } = params;
-
-  // Step 1: Extract mentioned names from the transcript using cheap LLM
-  const mentionedNames = await extractMentionedNames(container, transcriptChunk);
-
-  // Fetch the story's entity-type registry (to translate type IDs → names for the context)
-  const entityTypes = await container.store.getEntityTypes(storyId);
-  const typeNamesById = new Map(entityTypes.map(t => [t.id, t.name]));
-
-  // Step 2: Resolve names to entity IDs — works for ANY entity type
-  const resolvedEntities: RelevantContext['entities'] = [];
-
-  for (const name of mentionedNames) {
-    const entity = await container.store.findEntityByName(storyId, name);
-    if (entity) {
-      resolvedEntities.push({
-        id: entity.id,
-        entityType: typeNamesById.get(entity.entityTypeId) ?? 'unknown',
-        name: entity.name,
-        aliases: entity.aliases,
-        attributes: entity.attributes,
-      });
-    }
-  }
-
-  // Step 3: Fetch relationships for resolved entities (any type)
-  const entityIds = resolvedEntities.map(e => e.id);
-  const relationships = await container.store.getRelationships(storyId);
-  const relevantRelationships = relationships.filter(
-    r => entityIds.includes(r.fromEntityId) || entityIds.includes(r.toEntityId)
-  );
-
-  // Step 4: Fetch recent events (last 10)
-  const recentEvents = await container.store.getEvents(storyId, { limit: 10 });
-
-  // Step 5: Fetch open questions
-  const openQuestions = await container.store.getOpenQuestions(storyId, true);
-
-  // Step 6: Fetch semantic matches via vector search
-  const embedding = await getEmbedding(container, transcriptChunk);
-  const semanticMatches = await container.embeddings.search({
-    storyId,
-    queryEmbedding: embedding,
-    topK: 5,
-  });
-
-  // Step 7: Estimate tokens and trim if needed
-  const context: RelevantContext = {
-    entityTypes: entityTypes.map(t => ({ name: t.name, pluralName: t.pluralName, attributeDefs: t.attributeDefs })),
-    entities: resolvedEntities,
-    recentEvents: recentEvents.map(e => ({
-      title: e.title,
-      description: e.description,
-      participants: e.participants,
-    })),
-    relationships: relevantRelationships.map(r => ({
-      from: r.fromEntityId,
-      to: r.toEntityId,
-      kind: r.kind,
-      details: r.details,
-    })),
-    openQuestions: openQuestions.map(oq => oq.question),
-    tokenEstimate: 0,
+export async function buildCommitFromStaged(
+  session: ToolSession,
+  store: StoryWorldStore
+): Promise<CommitResult> {
+  const commit: Commit = {
+    storyId: session.storyId,
+    provenance: {
+      dictationId: session.dictationId,
+      textChunk: `chunk ${session.chunkIndex}`,
+      confidence: 'explicit',
+    },
+    // staged ops → commit sections (each entity/fact entry already validated by the executor)
+    entityTypes: session.staged.entityTypes,
+    entities: session.staged.entities,
+    events: session.staged.events,
+    facts: session.staged.facts,
+    supersedeFacts: session.staged.supersededFacts,
+    relationships: session.staged.relationships,
+    knowledge: session.staged.knowledge,
+    resolveOpenQuestions: session.staged.resolvedQuestions,
   };
 
-  context.tokenEstimate = estimateTokens(context);
-  return context;
-}
-
-async function extractMentionedNames(container: Container, text: string): Promise<string[]> {
-  const result = await container.llm.complete({
-    tier: 'cheap',
-    systemPrompt: 'Extract the names of every story entity mentioned in the text (characters, places, ships, factions, objects, ...). Return only a JSON array of strings.',
-    userMessage: text,
-    maxTokens: 200,
-  });
-
-  try {
-    return JSON.parse(result.text);
-  } catch {
-    return [];
-  }
-}
-
-async function getEmbedding(container: Container, text: string): Promise<number[]> {
-  // Placeholder — in production, call OpenAI embedding API
-  return [];
-}
-
-function estimateTokens(context: RelevantContext): number {
-  // Rough estimation: ~4 chars per token
-  const json = JSON.stringify(context);
-  return Math.ceil(json.length / 4);
+  const validated = applyCommit(commit);        // domain reducer — throws on invalid ops
+  return store.commit(validated);               // persists + bumps revision
 }
 ```
 
-### 8.3 Proposal Resolution & Commit
+### 8.4 Extraction Agent (processTranscript loop)
 
 ```typescript
-// src/application/extraction/resolve-proposals.ts
+// src/application/extraction/process.ts
 
-import type { Container } from '../../container';
-import { StoryChangeProposal } from '../../core/domain/proposals';
-import { Entity } from '../../core/domain/story-world';
-import { randomUUID } from 'crypto';
+const MAX_TOOL_CALLS = 40;       // per chunk — checked in the loop (session counter)
+const MAX_FETCHED_ENTITIES = 200;  // enforced by the get_entities executor
 
-export interface ResolvedProposal extends StoryChangeProposal {
-  _resolvedEntities: Map<string, string>;    // name/alias → entityId — ALL types in ONE map
-  _resolvedEntityTypes: Map<string, string>; // entityTypeName → entityTypeId (for newly registered types)
-}
-
-/**
- * Register any proposed brand-new entity types, then resolve every proposed entity's
- * name/alias to an existing entity ID — across ALL entity types via a single map.
- * New entities get fresh UUIDs.
- * Ambiguous matches are flagged for standard-tier review.
- */
-export async function resolveProposals(
+export async function processTranscript(
   container: Container,
-  storyId: string,
-  proposal: StoryChangeProposal
-): Promise<ResolvedProposal> {
-  const resolvedEntityTypes = new Map<string, string>();
+  job: ExtractionJob
+): Promise<CommitResult> {
+  const dictation = await container.transcriptStore.findById(job.dictationId);
+  const story = await container.store.getWorld(dictation.storyId);
+  if (!dictation.transcript?.trim()) return noOpResult(dictation.storyId);
 
-  // 0. Register proposed brand-new entity types first (e.g. "starship")
-  for (const type of proposal.entityTypes) {
-    const existing = await container.store.findEntityTypeByName(storyId, type.name);
-    const typeId = existing
-      ? existing.id
-      : await container.store.upsertEntityType(storyId, {
-          storyId,
-          name: type.name,
-          pluralName: type.pluralName,
-          baseKind: type.baseKind,
-          description: type.description,
-          attributeDefs: type.attributeDefs,
-          origin: 'extracted',
-          supersededBy: null,
-        });
-    resolvedEntityTypes.set(type.name, typeId);
-  }
+  const registry = story?.entityTypes ?? [];
+  for (const chunk of chunkTranscript(dictation.transcript)) {
+    // New tool session per chunk; writes only persist via finish.
+    const session: ToolSession = { storyId: dictation.storyId, dictationId: dictation.id, chunkIndex: 0, staged: emptyStaged(), contradictions: [], toolCalls: 0, fetchedEntities: 0 };
+    const messages: ChatMessage[] = [{ role: 'user', content: chunk }];
 
-  const resolvedEntities = new Map<string, string>();
+    while (true) {
+      const result = await container.llm.chat({
+        tier: 'standard',
+        messages: [{ role: 'system', content: extractionSystemPrompt(registry, ENTITY_FETCH_MAX) }, ...messages],
+        tools: STORY_TOOLS,
+      });
 
-  // 1. Resolve every proposed entity (of ANY type), name/alias → entityId
-  for (const entity of proposal.entities) {
-    const existing = await container.store.findEntityByName(storyId, entity.name);
-    if (existing) {
-      resolvedEntities.set(entity.name, existing.id);
-      continue;
-    }
-    let found = false;
-    for (const alias of entity.aliases) {
-      const byAlias = await container.store.findEntityByName(storyId, alias);
-      if (byAlias) {
-        resolvedEntities.set(entity.name, byAlias.id);
-        found = true;
-        break;
+      const calls = result.message.toolCalls ?? [];
+      if (!calls.length || session.toolCalls >= MAX_TOOL_CALLS) {
+        return buildCommitFromStaged(session, container.store);   // finish
+      }
+
+      messages.push(result.message);
+      for (const call of calls) {
+        const toolResult = await executor(session, call);
+        messages.push({ role: 'tool', content: JSON.stringify(toolResult), toolCallId: call.id });
       }
     }
-    if (!found) {
-      resolvedEntities.set(entity.name, randomUUID());
-    }
   }
-
-  return {
-    ...proposal,
-    _resolvedEntities: resolvedEntities,
-    _resolvedEntityTypes: resolvedEntityTypes,
-  };
 }
 ```
 
-### 8.4 Commit Service
+The system prompt always embeds the registry (types + `attributeDefs`). The model never sees the whole story — it fetches per-type subsets via `get_entities`, and every fetch is truncated to `ENTITY_FETCH_MAX` server-side (T5.1/T5.2). Budgets are enforced by the loop (tool-call counter) and the executor (fetch counter), not by `ChatRequest` fields.
+
+### 8.5 Context Builder (registry-bounded — reasoning path)
+
+The extraction path fetches via tools (§8.1–§8.4). The reasoning features (`askStory`, `doesEntityKnow`, `runContinuityCheck`) get bounded, schema-rendered context instead: mentions are matched against names/aliases **across all entity types** (no embeddings, no vector search), attributes are rendered per each type's `attributeDefs`, and output is capped.
 
 ```typescript
-// src/application/extraction/commit-proposals.ts
+// src/application/context/builder.ts
 
-import type { Container } from '../../container';
-import { ResolvedProposal } from './resolve-proposals';
-import { randomUUID } from 'crypto';
-
-export interface CommitResult {
-  entityTypesCreated: number;                     // e.g. 1 → "starship"
-  entitiesCreated: number;                        // total across all types
-  entitiesCreatedByType: Record<string, number>;  // e.g. { character: 1, starship: 2 }
-  eventsAdded: number;
-  factsAdded: number;
-  relationshipsAdded: number;
-  knowledgeAdded: number;
-  scenesAdded: number;
-  plotThreadsUpdated: number;
-  openQuestionsAdded: number;
-  contradictionsFound: number;
-  totalTokensUsed: { input: number; output: number };
+export interface ContextPackage {
+  entities: Array<{ id: string; typeName: string; name: string; aliases: string[]; attributes: Record<string, AttributeValue> }>;
+  relationships: Array<{ fromId: string; toId: string; kind: string; details: string | null }>;
+  recentEvents: StoryEvent[];      // last 10 across the mentioned entities
+  knowledge: EntityKnowledge[];
+  openQuestions: string[];
+  tokenEstimate: number;           // ~4 chars/token
 }
 
-export async function commitProposals(
-  container: Container,
-  params: {
-    storyId: string;
-    dictationId: string;
-    resolved: ResolvedProposal;
-    usage: { inputTokens: number; outputTokens: number };
-  }
-): Promise<CommitResult> {
-  const { storyId, dictationId, resolved, usage } = params;
-  const result: CommitResult = {
-    entityTypesCreated: 0,
-    entitiesCreated: 0,
-    entitiesCreatedByType: {},
-    eventsAdded: 0,
-    factsAdded: 0,
-    relationshipsAdded: 0,
-    knowledgeAdded: 0,
-    scenesAdded: 0,
-    plotThreadsUpdated: 0,
-    openQuestionsAdded: 0,
-    contradictionsFound: 0,
-    totalTokensUsed: { input: usage.inputTokens, output: usage.outputTokens },
-  };
+const CONTEXT_TOKEN_CAP = 4000;
 
-  // 1. New entity types were already registered during resolveProposals
-  result.entityTypesCreated = resolved.entityTypes.length;
-
-  // 2. Upsert entities of ANY type
-  for (const entity of resolved.entities) {
-    const entityId = resolved._resolvedEntities.get(entity.name)!;
-    const entityTypeId = resolved._resolvedEntityTypes.get(entity.entityTypeName)
-      ?? (await container.store.findEntityTypeByName(storyId, entity.entityTypeName))?.id;
-    if (!entityTypeId) {
-      throw new Error(`Proposed entity "${entity.name}" references unknown entity type "${entity.entityTypeName}"`);
-    }
-    await container.store.upsertEntity(storyId, {
-      id: entityId,
-      storyId,
-      entityTypeId,
-      name: entity.name,
-      aliases: entity.aliases,
-      attributes: entity.attributes,   // validated against the entity type's attributeDefs
-    });
-    result.entitiesCreated++;
-    result.entitiesCreatedByType[entity.entityTypeName] =
-      (result.entitiesCreatedByType[entity.entityTypeName] ?? 0) + 1;
-  }
-
-  // 3. Insert events
-  for (const evt of resolved.events) {
-    const participantIds = evt.participantNames
-      .map(name => resolved._resolvedEntities.get(name))
-      .filter(Boolean) as string[];
-
-    const settingId = evt.settingName
-      ? resolved._resolvedEntities.get(evt.settingName) ?? null
-      : null;
-
-    const objectIds = evt.involvedObjectNames
-      .map(name => resolved._resolvedEntities.get(name))
-      .filter(Boolean) as string[];
-
-    await container.store.insertEvent(storyId, {
-      id: randomUUID(),
-      title: evt.title,
-      description: evt.description,
-      settingId,
-      when: evt.when,
-      motivation: evt.motivation,
-      consequences: evt.consequences,
-      knowledgeGained: evt.knowledgeGained,
-      knowledgeConcealed: evt.knowledgeConcealed,
-      participants: participantIds,
-      involvedObjects: objectIds,
-      confidence: evt.confidence,
-      provenance: {
-        dictationId,
-        textChunk: evt.title,  // simplified
-        confidence: evt.confidence,
-      },
-    });
-    result.eventsAdded++;
-  }
-
-  // 4. Insert facts
-  for (const fact of resolved.facts) {
-    await container.store.insertFact(storyId, {
-      id: randomUUID(),
-      subject: fact.subject,
-      predicate: fact.predicate,
-      objectValue: fact.objectValue,
-      confidence: fact.confidence,
-      provenance: {
-        dictationId,
-        textChunk: `${fact.subject} ${fact.predicate} ${fact.objectValue ?? ''}`,
-        confidence: fact.confidence,
-      },
-      supersededBy: null,
-    });
-    result.factsAdded++;
-  }
-
-  // 5. Insert relationships (between ANY entity types)
-  for (const rel of resolved.relationships) {
-    const fromId = resolved._resolvedEntities.get(rel.fromEntityName);
-    const toId = resolved._resolvedEntities.get(rel.toEntityName);
-
-    if (fromId && toId) {
-      await container.store.insertRelationship(storyId, {
-        id: randomUUID(),
-        fromEntityId: fromId,
-        toEntityId: toId,
-        kind: rel.kind,
-        details: rel.details,
-        confidence: rel.confidence,
-        provenance: {
-          dictationId,
-          textChunk: `${rel.fromEntityName} ${rel.kind} ${rel.toEntityName}`,
-          confidence: rel.confidence,
-        },
-        supersededBy: null,
-      });
-      result.relationshipsAdded++;
-    }
-  }
-
-  // 6. Insert knowledge (any entity can "know")
-  for (const k of resolved.knowledge) {
-    const subjectId = resolved._resolvedEntities.get(k.subjectEntityName);
-    if (subjectId) {
-      await container.store.insertKnowledge(storyId, {
-        id: randomUUID(),
-        subjectEntityId: subjectId,
-        factId: null,
-        knowledgeText: k.knowledgeText,
-        status: k.status,
-        learnedWhen: k.learnedWhen,
-        learnedVia: k.learnedVia,
-      });
-      result.knowledgeAdded++;
-    }
-  }
-
-  // 7. Insert scenes
-  for (const scene of resolved.scenes) {
-    const settingId = scene.settingName
-      ? resolved._resolvedEntities.get(scene.settingName) ?? null
-      : null;
-
-    const participantIds = scene.participantNames
-      .map(name => resolved._resolvedEntities.get(name))
-      .filter(Boolean) as string[];
-
-    await container.store.insertScene(storyId, {
-      id: randomUUID(),
-      title: scene.title,
-      settingId,
-      when: scene.when,
-      summary: scene.summary,
-      chapterNumber: scene.chapterNumber,
-      eventIds: [],
-      participantIds,
-    });
-    result.scenesAdded++;
-  }
-
-  // 8. Upsert plot threads
-  for (const pt of resolved.plotThreads) {
-    const relatedIds = pt.relatedEntityNames
-      .map(name => resolved._resolvedEntities.get(name))
-      .filter(Boolean) as string[];
-
-    await container.store.upsertPlotThread(storyId, {
-      id: randomUUID(),
-      title: pt.title,
-      description: pt.description,
-      status: pt.status,
-      introducedInSceneId: null,
-      lastMentionedInSceneId: null,
-      relatedEntityIds: relatedIds,
-    });
-    result.plotThreadsUpdated++;
-  }
-
-  // 9. Insert open questions
-  for (const question of resolved.openQuestions) {
-    await container.store.insertOpenQuestion(storyId, {
-      id: randomUUID(),
-      question,
-      relatedEntityIds: [],
-      introducedInDictationId: dictationId,
-      resolvedInDictationId: null,
-      isResolved: false,
-    });
-    result.openQuestionsAdded++;
-  }
-
-  // 10. Log contradictions
-  for (const contradiction of resolved.contradictions) {
-    await container.store.insertContradiction({
-      storyId,
-      newFactDescription: contradiction.newFactDescription,
-      existingFactDescription: contradiction.existingFactDescription,
-    });
-    result.contradictionsFound++;
-  }
-
-  return result;
+export async function buildContext(
+  store: StoryWorldStore,
+  storyId: string,
+  mentions: string[]
+): Promise<ContextPackage> {
+  // 1. Parse mentions with parseMentions (T6.3) — greedy longest match on name/alias.
+  // 2. Resolve each mention via findEntityByName (matches ALL types), top ≤ 10.
+  // 3. For each resolved entity render attributes per its entityType.attributeDefs,
+  //    then attach relationships, recent events, knowledge claims, open questions.
+  // 4. Compute tokenEstimate; if > CONTEXT_TOKEN_CAP, trim relationships/events first.
+  // No embeddings anywhere.
 }
 ```
 
-### 8.5 Reasoning Services
+### 8.6 Reasoning Services
 
 ```typescript
 // src/application/reasoning/ask-story.ts
 
 import type { Container } from '../../container';
-import { buildRelevantContext } from '../context/context-builder';
+import { buildContext, parseMentions } from '../context/builder';
 
 export async function askStory(
   container: Container,
   params: { storyId: string; question: string }
 ): Promise<string> {
-  const context = await buildRelevantContext(container, {
-    storyId: params.storyId,
-    transcriptChunk: params.question,
-  });
+  const mentions = parseMentions(params.question, await container.store.getWorld(params.storyId).then(w => w?.entities ?? []));
+  const context = await buildContext(container.store, params.storyId, mentions);
 
   const systemPrompt = `You are a knowledgeable assistant embedded within a novel's story world. You have access to the story's characters, events, relationships, and facts. Answer the writer's question based ONLY on the provided story context. If the answer is not in the context, say so clearly. Be specific and cite characters/events when possible.`;
 
@@ -1791,7 +1538,8 @@ export async function runContinuityCheck(
   container: Container,
   storyId: string
 ): Promise<ContinuityIssue[]> {
-  const story = await container.store.getStory(storyId);
+  const story = await container.store.getWorld(storyId);
+  if (!story) return [];
   const issues: ContinuityIssue[] = [];
 
   // 1. Attribute consistency: compare an entity's key attributes across revisions (e.g. eye color).
@@ -1986,46 +1734,21 @@ export async function POST(request: NextRequest) {
 // workers/extraction-worker.ts
 
 import { buildContainer } from '../src/container';
-import { extractFromTranscript } from '../src/application/extraction/extract-entities';
-import { resolveProposals } from '../src/application/extraction/resolve-proposals';
-import { commitProposals } from '../src/application/extraction/commit-proposals';
-import { buildRelevantContext } from '../src/application/context/context-builder';
+import { processTranscript } from '../src/application/extraction/process';
+import { ExtractionJob } from '../src/container/job-queue';
 
 async function startWorker() {
   const container = buildContainer();
 
-  container.queue.onJobCompleted('extraction', async (data: any) => {
-    const { dictationId, storyId, transcript } = data;
-    console.log(`[Extraction] Processing dictation ${dictationId}`);
-
+  container.queue.onJobCompleted('extraction', async (job: ExtractionJob) => {
+    console.log(`[Extraction] Processing ${job.dictationId}`);
     try {
-      // 1. Build relevant context
-      const context = await buildRelevantContext(container, {
-        storyId,
-        transcriptChunk: transcript,
-      });
-
-      // 2. Extract proposal from LLM
-      const { proposal, usage } = await extractFromTranscript(container, {
-        transcript,
-        storyId,
-        existingContext: JSON.stringify(context),
-      });
-
-      // 3. Resolve entity names to IDs
-      const resolved = await resolveProposals(container, storyId, proposal);
-
-      // 4. Commit to database
-      const result = await commitProposals(container, {
-        storyId,
-        dictationId,
-        resolved,
-        usage,
-      });
-
+      // ProcessTranscript drives the agent loop: llm.chat + tool executor
+      // (T5.4) → staged writes validated via applyCommit → StoryWorldStore.commit.
+      const result = await processTranscript(container, job);
       console.log(`[Extraction] Completed:`, result);
     } catch (error) {
-      console.error(`[Extraction] Failed for dictation ${dictationId}:`, error);
+      console.error(`[Extraction] Failed for ${job.dictationId}:`, error);
     }
   });
 
@@ -2488,15 +2211,15 @@ export function ContradictionCard({ existingFact, newFact, onAction }: Contradic
 3. **T1.9-T1.11**: Domain unit tests
 
 ### Phase 2: Ports + In-Memory Adapters (Week 1-2)
-4. **T2.1-T2.8**: All port interfaces
-5. **T3.1-T3.7**: All in-memory adapters
+4. **T2.1-T2.7**: All port interfaces
+5. **T3.1-T3.6**: All in-memory adapters
 
 ### Phase 3: Composition Root (Week 2)
 6. **T4.1-T4.5**: DI container + contract tests
 
 ### Phase 4: Core Application Logic (Week 2-3)
-7. **T5.1-T5.7**: Extraction pipeline (prompts → resolve → stratify → commit)
-8. **T6.1-T6.3**: Context builder
+7. **T5.1-T5.5**: Story tool server + extraction agent (catalog → executor → commit → loop → tests)
+8. **T6.1-T6.3**: Bounded context builder (mention parser, token cap)
 
 ### Phase 5: Reasoning Layer (Week 3)
 9. **T7.1-T7.4**: Ask story, knowledge query, continuity checker
@@ -2510,7 +2233,7 @@ export function ContradictionCard({ existingFact, newFact, onAction }: Contradic
 13. **T11.1-T11.3**: AWS SQS job queue
 
 ### Phase 8: API Routes (Week 4-5)
-14. **T12.1-T12.8**: All API endpoints
+14. **T12.1-T12.10**: All API endpoints
 
 ### Phase 9: UI (Week 5-6)
 15. **T13.1**: Layout + sidebar
@@ -2518,10 +2241,9 @@ export function ContradictionCard({ existingFact, newFact, onAction }: Contradic
 17. **T13.4-T13.6**: Story views (characters, scenes, etc.)
 18. **T13.7-T13.8**: Ask + debugger screens
 
-### Phase 10: Polish (Week 6)
-19. **T14.1-T14.2**: pgvector embeddings
-20. **T15.1-T15.5**: Full test suite
-21. **T16.1-T16.4**: Error states, responsive design, deployment, README
+### Phase 10: Tests & Polish (Week 6)
+19. **T14.1-T14.5**: E2E, adapter contracts, cost guard, supersede edge cases, lint/typecheck
+20. **T15.1-T15.4**: Loading states, responsive, deployment config, README
 
 ---
 
