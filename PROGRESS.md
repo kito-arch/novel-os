@@ -143,6 +143,39 @@ ACTIONS.md                         # T2/T3 renumbered; Phase 5/6/7 rewritten (to
 - **JobQueue** is `JobQueue` (non-generic, §6.5/§9.3 shape) but gained `getStatus` + `JobStatus`/`ExtractionJob` from ACTIONS T2.6; handlers are `(data: unknown)` — workers cast to the job type.
 - **`AppRegistry` moved to `src/container/registry.ts`** with 7 tokens (CONFIG/STT/LLM/STORY_WORLD_STORE/TRANSCRIPT_STORE/JOB_QUEUE/CLOCK — no SEMANTIC_STORE); `@/container` re-exports it so `import { AppRegistry, LlmClient, SpeechToText } from '@/container'` works.
 
+## Phase 3: Memory Adapters — COMPLETE (T3.1–T3.6)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 warnings/errors.
+- `npm test` — 10 files, 64 tests, all pass (added `tests/adapters/memory.test.ts`, 11 tests).
+
+### Files created/changed
+
+```
+src/adapters/memory/llm.ts               # MockLlm: fixtures (extractStructured) + canned completions + scripted chat (tool-call steps)
+src/adapters/memory/stt.ts               # MockStt: immediate mock-N job id, canned transcript, prefix-validated job lookups
+src/adapters/memory/story-world-store.ts # MockStoryWorldStore: Map-backed, commits via applyCommit, byRevision snapshots,
+                                         # upsertEntityType/getEntityTypes/findEntityTypeByName, findEntityByName (name+aliases,
+                                         # case-insensitive), listEntities(typeId?), attachMedia/getMedia, insertKnowledge/getKnowledge
+src/adapters/memory/transcript-store.ts  # MockTranscriptStore: Map<Dictation> + findDictationByProviderJobId, updateDictation, listDictations
+src/adapters/memory/job-queue.ts         # MockJobQueue: onJobCompleted/onJobFailed/wait/emit + getStatus
+src/adapters/memory/index.ts             # barrel (T3.6)
+src/adapters/index.ts                    # now re-exports ./memory (bootstrap test imports @/adapters)
+tests/adapters/memory.test.ts            # 11 tests (LLM fixtures/script, STT round-trip, commit store T1.11-style, supersede,
+                                         # transcript round-trip, job-queue completed/failed)
+```
+
+### Decisions / deviations
+
+- **`MockStoryWorldStore` reuses the domain reducer:** `commit` runs `applyCommit` (the same validation gate the Postgres adapter enforces) and records an immutable snapshot per revision; `byRevision` reads snapshots. Auxiliary `attachMedia`/`insertKnowledge` live in separate maps merged into reads (`getWorld`/`getEntity`/`findEntityByName`/`listEntities`) so snapshots never drift.
+- **`findEntityByName` is case-insensitive and matches `aliases`** across all types per T2.3/T3.3.
+- **Mock LLM `chat` walks a script of `{ content? , toolCalls? }` steps**; the last step has no tool calls so the T5.4 agent loop terminates. `extractStructured` parses a matching fixture keyed by message substring, else an empty `StoryChangeProposal`. No real provider and no parser retry needed for mocks.
+- **`MockStt` validates `jobId` prefix** (`mock-` by default) in `getJobStatus`/`getTranscript`; unknown job ids return `failed` / throw. `submitTranscription` returns `mock-1`, `mock-2`, … (T3.2).
+- **`MockJobQueue` executes handlers synchronously in-process** (deterministic pipeline tests); if no handler is registered for a job name the job stays `queued`. Handler failure routes to `onJobFailed` and marks the job `failed`.
+- **Contract-test suite (T4.5) deferred to Phase 4** — T3.x verification here uses the direct memory tests plus the T1.11-style commit acceptance; T4.5 remains the formal reusable adapter contract.
+
 ### Next up
 
-Phase 3 — Memory Adapters (T3.1–T3.6): in-memory LLM/STT/StoryWorldStore/TranscriptStore/JobQueue + barrel. The mock LLM's `chat` scripts canned tool-calls to drive the T5.4 agent-loop tests. Begin when ready.
+Phase 4 — Composition Root & Service Container (T4.1–T4.5): extend `AppRegistry` (7 tokens + CONFIG), `buildMemoryContainer`, stub `buildContainer`, per-request scoped container, and the reusable adapters contract test suite.

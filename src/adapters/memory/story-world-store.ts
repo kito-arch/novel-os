@@ -1,0 +1,266 @@
+import { randomUUID } from "node:crypto";
+import type { Clock } from "../../container/clock";
+import type {
+  EventQuery,
+  StoryWorldStore,
+} from "../../container/story-world-store";
+import type { Commit, CommitResult } from "../../domain/commits";
+import { applyCommit } from "../../domain/commits";
+import type { Entity, MediaRef } from "../../domain/entities";
+import type { EntityType } from "../../domain/entity-types";
+import type { StoryEvent } from "../../domain/events";
+import type { EntityKnowledge } from "../../domain/knowledge";
+import type { StoryWorld } from "../../domain/story-world";
+
+function identity(): string {
+  return randomUUID();
+}
+
+// In-memory StoryWorldStore for tests/dev.
+//
+// The world is a pure snapshot advanced exclusively through the domain
+// reducer `applyCommit` — commits that violate revision/validation invariants
+// throw (the same gate the Postgres adapter will enforce). Media (attachMedia)
+// and knowledge (insertKnowledge) are kept in auxiliary maps and merged into
+// reads at the current revision; the revision history itself is append-only
+// and immutable, so `byRevision` snapshots never drift.
+export interface MockStoryWorldStoreOptions {
+  clock?: Clock;
+  now?: () => Date;
+}
+
+export class MockStoryWorldStore implements StoryWorldStore {
+  private readonly worlds = new Map<string, StoryWorld>();
+  private readonly revisions = new Map<string, Map<number, StoryWorld>>();
+  private readonly mediaByEntity = new Map<string, MediaRef[]>();
+  private readonly knowledgeBySubject = new Map<string, EntityKnowledge[]>();
+
+  constructor(private readonly options: MockStoryWorldStoreOptions = {}) {}
+
+  private now(): Date {
+    return this.options.clock?.now() ?? this.options.now?.() ?? new Date();
+  }
+
+  private createWorld(storyId: string): StoryWorld {
+    return {
+      id: storyId,
+      title: "Untitled story",
+      synopsis: null,
+      storyType: null,
+      revision: 0,
+      entityTypes: [],
+      entities: [],
+      facts: [],
+      events: [],
+      relationships: [],
+      knowledge: [],
+      scenes: [],
+      plotThreads: [],
+      openQuestions: [],
+    };
+  }
+
+  private recordSnapshot(storyId: string, world: StoryWorld): void {
+    let byRevision = this.revisions.get(storyId);
+    if (!byRevision) {
+      byRevision = new Map();
+      this.revisions.set(storyId, byRevision);
+    }
+    byRevision.set(world.revision, world);
+  }
+
+  private mergeKnowledge(
+    committed: EntityKnowledge[],
+    subjectsById: ReadonlyMap<string, EntityKnowledge[]>,
+  ): EntityKnowledge[] {
+    const byId = new Map<string, EntityKnowledge>();
+    for (const row of committed) byId.set(row.id, row);
+    for (const rows of subjectsById.values()) {
+      for (const row of rows) {
+        if (!byId.has(row.id)) byId.set(row.id, row);
+      }
+    }
+    return [...byId.values()];
+  }
+
+  // Returns a world copy with auxiliary media + knowledge merged in, so every
+  // read reflects insertKnowledge/attachMedia without mutating the snapshot.
+  private finalize(world: StoryWorld): StoryWorld {
+    const entities = world.entities.map((entity) => {
+      const media = this.mediaByEntity.get(entity.id);
+      return media?.length ? { ...entity, media } : entity;
+    });
+    const knowledge = this.mergeKnowledge(world.knowledge, this.knowledgeBySubject);
+    return { ...world, entities, knowledge };
+  }
+
+  async getWorld(storyId: string): Promise<StoryWorld | null> {
+    const world = this.worlds.get(storyId);
+    return world ? this.finalize(world) : null;
+  }
+
+  async commit(commit: Commit): Promise<CommitResult> {
+    const existing = this.worlds.get(commit.storyId) ?? this.createWorld(commit.storyId);
+    // applyCommit is the single validation gate: revision mismatch, duplicate
+    // entities, unknown types, invalid attributes all throw here.
+    const applied = applyCommit(existing, commit);
+    this.worlds.set(commit.storyId, applied.world);
+    this.recordSnapshot(commit.storyId, applied.world);
+    return applied.result;
+  }
+
+  async getEntity(storyId: string, entityId: string): Promise<Entity | null> {
+    const world = this.worlds.get(storyId);
+    if (!world) return null;
+    const entity = this.finalize(world).entities.find((candidate) => candidate.id === entityId);
+    return entity ?? null;
+  }
+
+  async queryEvents(storyId: string, query?: EventQuery): Promise<StoryEvent[]> {
+    const world = this.worlds.get(storyId);
+    if (!world) return [];
+    const q = query ?? {};
+    let events = world.events;
+
+    if (q.entityId) {
+      events = events.filter(
+        (event) =>
+          event.settingId === q.entityId ||
+          event.participants.includes(q.entityId!) ||
+          event.involvedObjects.includes(q.entityId!),
+      );
+    }
+    if (q.settingId) events = events.filter((event) => event.settingId === q.settingId);
+    if (q.from) events = events.filter((event) => event.createdAt >= q.from!);
+    if (q.to) events = events.filter((event) => event.createdAt <= q.to!);
+
+    const offset = q.offset ?? 0;
+    return events.slice(offset, offset + (q.limit ?? events.length));
+  }
+
+  async byRevision(storyId: string, revision: number): Promise<StoryWorld | null> {
+    const snapshot = this.revisions.get(storyId)?.get(revision);
+    return snapshot ? this.finalize(snapshot) : null;
+  }
+
+  async upsertEntityType(
+    storyId: string,
+    def: Omit<EntityType, "id" | "createdAt">,
+  ): Promise<string> {
+    const existingWorld = this.worlds.get(storyId);
+    const world = existingWorld ?? this.createWorld(storyId);
+
+    const existing = world.entityTypes.find((type) => type.name === def.name);
+    if (existing) {
+      const updated: EntityType = {
+        ...existing,
+        ...def,
+        id: existing.id,
+        createdAt: existing.createdAt,
+      };
+      const entityTypes = world.entityTypes.map((type) =>
+        type.id === existing.id ? updated : type,
+      );
+      this.worlds.set(storyId, { ...world, entityTypes });
+      return existing.id;
+    }
+
+    const id = identity();
+    const type: EntityType = {
+      id,
+      storyId,
+      name: def.name,
+      pluralName: def.pluralName,
+      baseKind: def.baseKind,
+      description: def.description ?? null,
+      attributeDefs: def.attributeDefs,
+      origin: def.origin,
+      supersededBy: def.supersededBy ?? null,
+      createdAt: this.now(),
+    };
+    this.worlds.set(storyId, { ...world, entityTypes: [...world.entityTypes, type] });
+    return id;
+  }
+
+  async findEntityTypeByName(storyId: string, name: string): Promise<EntityType | null> {
+    const world = this.worlds.get(storyId);
+    if (!world) return null;
+    return (
+      world.entityTypes.find(
+        (type) => type.name.toLowerCase() === name.toLowerCase(),
+      ) ?? null
+    );
+  }
+
+  async getEntityTypes(storyId: string): Promise<EntityType[]> {
+    return this.worlds.get(storyId)?.entityTypes ?? [];
+  }
+
+  async findEntityByName(storyId: string, name: string): Promise<Entity | null> {
+    const world = this.worlds.get(storyId);
+    if (!world) return null;
+    const wanted = name.toLowerCase();
+    return (
+      this.finalize(world).entities.find(
+        (entity) =>
+          entity.name.toLowerCase() === wanted ||
+          entity.aliases.some((alias) => alias.toLowerCase() === wanted),
+      ) ?? null
+    );
+  }
+
+  async listEntities(storyId: string, entityTypeId?: string): Promise<Entity[]> {
+    const world = this.worlds.get(storyId);
+    if (!world) return [];
+    const entities = this.finalize(world).entities;
+    return entityTypeId ? entities.filter((entity) => entity.entityTypeId === entityTypeId) : entities;
+  }
+
+  async attachMedia(entityId: string, media: Omit<MediaRef, "id" | "createdAt">): Promise<string> {
+    const existing = this.mediaByEntity.get(entityId) ?? [];
+    const row: MediaRef = {
+      id: identity(),
+      url: media.url,
+      role: media.role,
+      caption: media.caption ?? null,
+      createdAt: this.now(),
+    };
+    this.mediaByEntity.set(entityId, [...existing, row]);
+    return row.id;
+  }
+
+  async getMedia(entityId: string): Promise<MediaRef[]> {
+    return this.mediaByEntity.get(entityId) ?? [];
+  }
+
+  async insertKnowledge(
+    storyId: string,
+    knowledge: Omit<EntityKnowledge, "id" | "createdAt">,
+  ): Promise<string> {
+    const row: EntityKnowledge = {
+      id: identity(),
+      subjectEntityId: knowledge.subjectEntityId,
+      factId: knowledge.factId ?? null,
+      knowledgeText: knowledge.knowledgeText,
+      status: knowledge.status,
+      learnedWhen: knowledge.learnedWhen ?? null,
+      learnedVia: knowledge.learnedVia ?? null,
+      createdAt: this.now(),
+    };
+    const existing = this.knowledgeBySubject.get(row.subjectEntityId) ?? [];
+    this.knowledgeBySubject.set(row.subjectEntityId, [...existing, row]);
+    return row.id;
+  }
+
+  async getKnowledge(storyId: string, subjectEntityId: string): Promise<EntityKnowledge[]> {
+    return this.knowledgeBySubject.get(subjectEntityId) ?? [];
+  }
+}
+
+export function createMockStoryWorldStore(
+  options: MockStoryWorldStoreOptions = {},
+): StoryWorldStore {
+  return new MockStoryWorldStore(options);
+}
+
+export const mockStoryWorldStore = new MockStoryWorldStore();

@@ -154,37 +154,37 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 
 ## Phase 3: Memory Adapters (for tests and dev)
 
-### T3.1 — In-memory LLM adapter
+### T3.1 — In-memory LLM adapter ✅ Done
 - **Scope:** Implement `LlmClient` backed by a `Map<string, StoryChangeProposals>` fixture store. `extractStructured` returns the matching fixture or a sensible default. `complete` returns canned strings. `chat` returns canned tool-calls from a scripted fixture (used to drive deterministic agent-loop tests in T5.4) — the tool executor (T5.2) runs the calls in-process.
 - **Files:** `src/adapters/memory/llm.ts`
 - **Deps:** T2.1, T1.6
 - **Acceptance:** Passes a mock contract test (see T4.5).
 
-### T3.2 — In-memory STT adapter
+### T3.2 — In-memory STT adapter ✅ Done
 - **Scope:** Implement `SpeechToText` that immediately returns a canned transcript. Configurable via constructor injection.
 - **Files:** `src/adapters/memory/stt.ts`
 - **Deps:** T2.2
 - **Acceptance:** `transcribe` resolves immediately with `{ jobId: 'mock-1' }`.
 
-### T3.3 — In-memory StoryWorldStore adapter
+### T3.3 — In-memory StoryWorldStore adapter ✅ Done
 - **Scope:** Implement `StoryWorldStore` using `Map<string, StoryWorld>`. `commit` appends events, upserts entities of any type, registers new entity types, upserts facts/knowledge, bumps revision atomically. `getEntity` does linear scan. `queryEvents` filters by predicates. Entity-name lookup matches name + aliases across all types.
 - **Files:** `src/adapters/memory/story-world-store.ts`
 - **Deps:** T2.3, T1.7, T1.6
 - **Acceptance:** Commit tests from T1.11 can use this adapter as the backing store, including a commit that registers a `starship` type and adds starship entities.
 
-### T3.4 — In-memory TranscriptStore adapter
+### T3.4 — In-memory TranscriptStore adapter ✅ Done
 - **Scope:** Implement `TranscriptStore` using `Map<string, Dictation>`. `search` does case-insensitive substring match.
 - **Files:** `src/adapters/memory/transcript-store.ts`
 - **Deps:** T2.4
 - **Acceptance:** Round-trip save/get works.
 
-### T3.5 — In-memory JobQueue adapter
+### T3.5 — In-memory JobQueue adapter ✅ Done
 - **Scope:** Implement `JobQueue<T>` that immediately invokes registered handlers on `enqueue`. Useful for synchronous testing of the full pipeline.
 - **Files:** `src/adapters/memory/job-queue.ts`
 - **Deps:** T2.5
 - **Acceptance:** `enqueue` triggers the `onJobCompleted` handler. `getStatus` returns `'completed'` after the handler finishes.
 
-### T3.6 — Memory adapter barrel export
+### T3.6 — Memory adapter barrel export ✅ Done
 - **Scope:** Re-export all memory adapters from `src/adapters/memory/index.ts`.
 - **Files:** `src/adapters/memory/index.ts`
 - **Deps:** T3.1–T3.5
