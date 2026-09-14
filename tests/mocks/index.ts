@@ -1,6 +1,8 @@
 export { MockClock } from "./clock";
 export { MockLlm, createMockLlm, mockLlm } from "./llm";
 export type { MockLlmOptions } from "./llm";
+export { scriptedModel } from "./sdk-model";
+export type { ScriptedModelStep } from "./sdk-model";
 export { MockStt, createMockStt, mockStt } from "./stt";
 export type { MockSttOptions } from "./stt";
 export { MockStoryWorldStore, createMockStoryWorldStore, mockStoryWorldStore } from "./story-world-store";

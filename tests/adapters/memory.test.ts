@@ -66,24 +66,6 @@ describe("memory: MockLlm", () => {
     expect((await llm.complete({ tier: "cheap", systemPrompt: "", userMessage: "say hello" })).text).toBe("well hi");
     expect((await llm.complete({ tier: "cheap", systemPrompt: "", userMessage: "zzz" })).text).toBe("ok");
   });
-
-  it("chat walks a script of tool calls then a final message", async () => {
-    const call = { id: "c1", name: "get_entities", arguments: { entityTypeId: TYPE_ID } };
-    const llm = createMockLlm({
-      chatScript: [
-        { toolCalls: [call] },
-        { content: "done" },
-      ],
-    });
-
-    const first = await llm.chat({ messages: [{ role: "user", content: "hi" }] });
-    expect(first.message.toolCalls).toEqual([call]);
-    expect(first.message.content).toBeNull();
-
-    const second = await llm.chat({ messages: [{ role: "user", content: "hi" }] });
-    expect(second.message.toolCalls).toBeUndefined();
-    expect(second.message.content).toBe("done");
-  });
 });
 
 describe("memory: MockStt", () => {
@@ -141,6 +123,7 @@ describe("memory: MockStoryWorldStore", () => {
       scenes: [],
       plotThreads: [],
       openQuestions: [],
+      resolvedOpenQuestionIds: [],
       contradictions: [],
       supersedeFactIds: [],
     });
@@ -171,6 +154,7 @@ describe("memory: MockStoryWorldStore", () => {
       scenes: [],
       plotThreads: [],
       openQuestions: [],
+      resolvedOpenQuestionIds: [],
       contradictions: [],
       supersedeFactIds: [],
     };
@@ -231,6 +215,7 @@ describe("memory: MockStoryWorldStore", () => {
       scenes: [],
       plotThreads: [],
       openQuestions: [],
+      resolvedOpenQuestionIds: [],
       contradictions: [],
       supersedeFactIds: [],
     });
@@ -248,6 +233,7 @@ describe("memory: MockStoryWorldStore", () => {
       scenes: [],
       plotThreads: [],
       openQuestions: [],
+      resolvedOpenQuestionIds: [],
       contradictions: [],
       supersedeFactIds: [factId],
     });

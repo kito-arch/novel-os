@@ -35,10 +35,6 @@ const stubLlm: LlmClient = {
     data: request.schema.parse({ ok: true }) as T,
     usage: { inputTokens: 1, outputTokens: 1 },
   }),
-  chat: async () => ({
-    message: { role: "assistant", content: "ok" },
-    usage: { inputTokens: 1, outputTokens: 1 },
-  }),
 };
 
 const stubStoryWorldStore: StoryWorldStore = {
@@ -56,6 +52,7 @@ const stubStoryWorldStore: StoryWorldStore = {
     scenesAdded: 0,
     plotThreadsUpdated: 0,
     openQuestionsAdded: 0,
+    openQuestionsResolved: 0,
     contradictionsFound: 0,
     factsSuperseded: 0,
   }),
@@ -91,7 +88,7 @@ const stubJobQueue: JobQueue = {
 describe("container registry (Phase 2 ports)", () => {
   it("AppRegistry declares every port token and resolves it typed", () => {
     const container = createContainer<AppRegistry>();
-    container.load("app", createAppModule(loadConfig({})));
+    container.load("app", createAppModule(loadConfig({ LLM_PROVIDER: "mock" })));
 
     container.bind("CLOCK").toValue(stubClock);
     container.bind("STT").toValue(stubStt);

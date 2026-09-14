@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import {
   EntityTypeSchema,
   SupersedeAction,
@@ -173,6 +174,7 @@ function buildStarshipCommit(revision = 0): Commit {
         action: SupersedeAction.FlagSoft,
       },
     ],
+    resolvedOpenQuestionIds: [],
     supersedeFactIds: [],
   };
 }
@@ -207,6 +209,49 @@ describe("applyCommit", () => {
     expect(next.entityTypes.find((type) => type.name === "character")).toBeDefined();
     expect(next.entityTypes.find((type) => type.name === "place")).toBeDefined();
     expect(next.entities.find((entity) => entity.name === "Aria Voss")).toBeDefined();
+  });
+
+  it("marks staged open questions resolved (stage_resolve_open_question)", () => {
+    const unanswered = {
+      id: "40000000-0000-4000-8000-000000000006",
+      question: "Who fired first?",
+      relatedEntityIds: [] as string[],
+      introducedInDictationId: DICTATION_ID,
+      resolvedInDictationId: null,
+      isResolved: false,
+      createdAt: T0,
+    };
+    const world: StoryWorld = { ...buildWorld(), openQuestions: [unanswered] };
+    const commit: Commit = {
+      ...emptyCommit(STORY_ID, 0),
+      resolvedOpenQuestionIds: [unanswered.id],
+    };
+
+    const { world: next, result } = applyCommit(world, commit);
+
+    expect(result.openQuestionsResolved).toBe(1);
+    expect(next.openQuestions[0].isResolved).toBe(true);
+  });
+
+  it("rejects resolution of an unknown or already-resolved open question", () => {
+    const resolved = {
+      id: "40000000-0000-4000-8000-000000000006",
+      question: "Who fired first?",
+      relatedEntityIds: [] as string[],
+      introducedInDictationId: DICTATION_ID,
+      resolvedInDictationId: null,
+      isResolved: true,
+      createdAt: T0,
+    };
+    const world: StoryWorld = { ...buildWorld(), openQuestions: [resolved] };
+    const commit: Commit = {
+      ...emptyCommit(STORY_ID, 0),
+      resolvedOpenQuestionIds: [resolved.id],
+    };
+
+    expect(() => applyCommit(world, commit)).toThrow(/already resolved/);
+    const orphan: Commit = { ...emptyCommit(STORY_ID, 0), resolvedOpenQuestionIds: [randomUUID()] };
+    expect(() => applyCommit(buildWorld(), orphan)).toThrow(/unknown open question/);
   });
 
   it("survives on a space-opera world seeded via the preset", () => {

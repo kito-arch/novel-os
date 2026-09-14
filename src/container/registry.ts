@@ -1,4 +1,5 @@
 import type { AppConfig } from "../config";
+import type { TranscriptProcessor } from "../services/llm-agent/transcript-processor";
 import type { Clock } from "./clock";
 import type { JobQueue } from "./job-queue";
 import type { LlmClient } from "./llm";
@@ -21,4 +22,5 @@ export type AppRegistry = {
   TRANSCRIPT_STORE: TranscriptStore;
   JOB_QUEUE: JobQueue;
   CLOCK: Clock;
+  TRANSCRIPT_PROCESSOR: TranscriptProcessor;
 };

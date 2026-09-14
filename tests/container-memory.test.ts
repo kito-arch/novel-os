@@ -47,27 +47,27 @@ describe("Phase 4 composition root", () => {
   it("buildContainer throws a descriptive error for every unimplemented adapter", () => {
     // Real providers → phase-referencing error.
     expect(() =>
-      buildContainer(loadConfig({ STT_PROVIDER: "assemblyai", STT_API_KEY: "k" })),
+      buildContainer(loadConfig({ STT_PROVIDER: "assemblyai", STT_API_KEY: "k", LLM_PROVIDER: "mock" })),
     ).toThrow(/AssemblyAI/);
     expect(() =>
       buildContainer(loadConfig({ LLM_PROVIDER: "openai", LLM_API_KEY: "k" })),
     ).toThrow(NotImplementedError);
 
     // Mock providers → no src mock adapter belongs in production; mocks live in tests.
-    expect(() => buildContainer(loadConfig({}))).toThrow(
+    expect(() => buildContainer(loadConfig({ LLM_PROVIDER: "mock" }))).toThrow(
       /tests\/mocks/,
     );
-    expect(() => buildContainer(loadConfig({ DATABASE_URL: "postgres://x" }))).toThrow(
+    expect(() => buildContainer(loadConfig({ DATABASE_URL: "postgres://x", LLM_PROVIDER: "mock" }))).toThrow(
       NotImplementedError,
     );
   });
 
   it("supports typed registry resolution for every port token", () => {
-    const config: AppRegistry["CONFIG"] = loadConfig({});
+    const config: AppRegistry["CONFIG"] = loadConfig({ LLM_PROVIDER: "mock" });
     const container = buildMemoryContainer();
     expect(container.get("CLOCK").now()).toBeInstanceOf(Date);
     expect(typeof container.get("JOB_QUEUE").enqueue).toBe("function");
-    expect(typeof container.get("LLM").chat).toBe("function");
+    expect(typeof container.get("LLM").complete).toBe("function");
     expect(typeof container.get("STT").submitTranscription).toBe("function");
     expect(config.LLM_CHEAP_MODEL).toBe("gpt-5-nano");
   });

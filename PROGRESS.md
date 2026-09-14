@@ -10,7 +10,7 @@ Live status of implementation against `ACTIONS.md`. Each phase lists tasks with 
 | --- | --- | --- |
 | T0.1 — Initialize Next.js project | ✅ Done | Next.js 16.3.5 (App Router, TypeScript, Tailwind v4, ESLint 9). `npm run dev` serves 200; `npm run lint` clean. |
 | T0.2 — Install core dependencies | ✅ Done | zod, drizzle-orm, @trpc/server, uuid, nanoid, @evyweb/ioctopus + dev deps drizzle-kit, vitest, @types/node@24. |
-| T0.3 — Configure path aliases | ✅ Done | `@/*` → `./src/*` (pre-set by create-next-app); domain/adapters/application barrels + `@/container` composition root created; `vitest.config.ts` alias; resolution proven in test. |
+| T0.3 — Configure path aliases | ✅ Done | `@/*` → `./src/*` (pre-set by create-next-app); domain/adapters/services barrels + `@/container` composition root created; `vitest.config.ts` alias; resolution proven in test. |
 | T0.4 — Configure env and config module | ✅ Done | `src/config/index.ts` Zod-validated `loadConfig`; requires API key when a real provider is selected. |
 
 ### Acceptance verification (all pass)
@@ -27,7 +27,7 @@ package.json                # scripts: typecheck, test added; ioctopus + data de
 src/config/index.ts         # AppConfig, configSchema, loadConfig, EnvVars
 src/domain/index.ts         # barrel (placeholder export, filled in Phase 1)
 src/adapters/index.ts       # barrel (placeholder export, filled in Phase 3+)
-src/application/index.ts    # barrel (placeholder export, filled in Phase 5+)
+src/services/index.ts    # barrel (placeholder export, filled in Phase 5+)
 src/container/index.ts      # ioctopus composition root: AppRegistry, createAppModule, buildContainer
 tests/bootstrap.test.ts     # proves @/ alias resolves to all barrels
 tests/container.test.ts     # proves ioctopus binds/resolves CONFIG with full type safety
@@ -44,7 +44,7 @@ tsconfig.json               # @/* alias (from scaffold)
 - **`@types/node` bumped ^20 → ^24**: vitest v5 requires `@types/node@^22 || >=24`; matches installed Node v24.
 - **`drizzle-kit` installed as devDependency** (not a runtime dep) — it is a CLI used only for migrations.
 - **Config design (`loadConfig`):**
-  - `STT_PROVIDER`/`LLM_PROVIDER` default to `"mock"`; real provider values require their API key at runtime (`superRefine`), satisfying "missing required env throws at call time".
+  - `STT_PROVIDER` defaults to `"mock"`; `LLM_PROVIDER` defaults to **`"openai"`** (the agent loop needs a real LLM in prod and dev; updated during the AI SDK migration). Real provider values require their API key at runtime (`superRefine`), satisfying "missing required env throws at call time"; `mock` is a test-only escape hatch.
   - Optional fields (`DATABASE_URL`, `REDIS_URL`, API keys) are unset in dev so Phase 0–7 run on memory adapters without external services.
   - `loadConfig` accepts an `EnvVars` record (`Record<string, string | undefined>`) rather than `NodeJS.ProcessEnv` because Next.js augments `ProcessEnv` with a required `NODE_ENV`, which made plain test objects untypeable. `process.env` remains the default argument.
 - **Composition uses `@evyweb/ioctopus` instead of a `src/di`/`src/ports` abstraction layer:** the IoC container *is* the abstraction boundary. `src/container/index.ts` is the composition root (typed `AppRegistry`, `createAppModule`, `buildContainer`); port contracts will live in `src/container/*.ts` and resolve via `container.get('TOKEN')` with full type safety. No hand-rolled `ServiceContainer` type.
@@ -120,8 +120,8 @@ tests/domain/commits.test.ts        # 9 tests
 ### Files created/changed
 
 ```
-src/container/llm.ts               # ModelTier, LlmClient (complete/extractStructured/chat), CompletionRequest/Result,
-                                   # ExtractionRequest<T>/Result<T>, ChatMessage/ToolCall/ToolDefinition/ChatRequest/ChatResult
+src/container/llm.ts               # ModelTier, LlmClient (complete/extractStructured), CompletionRequest/Result,
+                                   # ExtractionRequest<T>/Result<T> — tool-calling chat types trimmed (AI SDK owns them)
 src/container/stt.ts               # SpeechToText, TranscribeRequest (webhookAuth), TranscriptResult, getTranscript
 src/container/story-world-store.ts # commit-based StoryWorldStore + EntityRef/EventQuery/Snapshot
 src/container/transcript-store.ts  # TranscriptStore + Dictation (userId, providerJobId), findDictationByProviderJobId
@@ -139,7 +139,7 @@ ACTIONS.md                         # T2/T3 renumbered; Phase 5/6/7 rewritten (to
 - **Port contracts follow ACTIONS.md T2.x** (the task spec); IMPLEMENTATION.md §6 was reconciled to match the code, not the other way around. Notably: `StoryWorldStore` is **commit-based** (`commit(commit: Commit): Promise<CommitResult>`, `getWorld`, `byRevision`, `queryEvents`) — the old §6.3 granular CRUD (getStory/createStory/insertFact/…) is gone; `upsertEntityType`/`listEntities` registry ops are retained. Story CRUD was intentionally **not** added (no task depends on it yet; will be added when T12/T8 needs it).
 - **LLM port named per ACTIONS:** `extractStructured<T>` (not §6.2's `extractProposal`), `ModelTier` (not `LLMTier`), with `CompletionRequest`/`ExtractionRequest<T>`/`ExtractionResult<T>`; `schema` is a `ZodType<T>` (zod v4 still exports `ZodType`), so the OpenAI adapter can serialize it to JSON Schema.
 - **STT port extended with** `getTranscript` (> T10.1 + §9.2 use it) and `webhookAuth` on `TranscribeRequest` (echoes `WEBHOOK_SECRET`); the webhook correlation contract (`%providerJobId` ↔ `findDictationByProviderJobId`) is untouched.
-- **Design change (user decision):** extraction moved from single-shot `extractStructured` to a native-`chat` **agent loop over a story tool server** (T5.x). `SemanticStore` / pgvector / embeddings were **removed entirely** — no `SEMANTIC_STORE` token, no semantic search anywhere. Guided fetch is registry-based: the system prompt carries the entity-type registry; `get_entities` returns bounded subsets (default 50 / max 200) enforced server-side; mutations stage in a session and persist only via `applyCommit` → `StoryWorldStore.commit` with server-stamped provenance.
+- **Design change (user decision):** extraction moved from single-shot `extractStructured` to an **agent loop over a story tool server** (T5.x), driven by the **Vercel AI SDK** (`generateText` + `tools` + `stopWhen`) instead of a hand-rolled `LlmClient.chat` loop. `SemanticStore` / pgvector / embeddings were **removed entirely** — no `SEMANTIC_STORE` token, no semantic search anywhere. Guided fetch is registry-based: the system prompt carries the entity-type registry; `get_entities` returns bounded subsets (default 50 / max 200) enforced server-side; mutations stage in a session and persist only via `applyCommit` → `StoryWorldStore.commit` with server-stamped provenance.
 - **JobQueue** is `JobQueue` (non-generic, §6.5/§9.3 shape) but gained `getStatus` + `JobStatus`/`ExtractionJob` from ACTIONS T2.6; handlers are `(data: unknown)` — workers cast to the job type.
 - **`AppRegistry` moved to `src/container/registry.ts`** with 7 tokens (CONFIG/STT/LLM/STORY_WORLD_STORE/TRANSCRIPT_STORE/JOB_QUEUE/CLOCK — no SEMANTIC_STORE); `@/container` re-exports it so `import { AppRegistry, LlmClient, SpeechToText } from '@/container'` works.
 
@@ -156,7 +156,8 @@ ACTIONS.md                         # T2/T3 renumbered; Phase 5/6/7 rewritten (to
 ### Files created/changed
 
 ```
-tests/mocks/llm.ts               # MockLlm: fixtures (extractStructured) + canned completions + scripted chat (tool-call steps)
+tests/mocks/llm.ts               # MockLlm: fixtures (extractStructured) + canned completions (complete); chat removed
+tests/mocks/sdk-model.ts         # scriptedModel(): AI SDK LanguageModel (MockLanguageModelV4) walking a tool-call script
 tests/mocks/stt.ts               # MockStt: immediate mock-N job id, canned transcript, prefix-validated job lookups
 tests/mocks/story-world-store.ts # MockStoryWorldStore: Map-backed, commits via applyCommit, byRevision snapshots,
                                  # upsertEntityType/getEntityTypes/findEntityTypeByName, findEntityByName (name+aliases,
@@ -176,7 +177,7 @@ tests/adapters/memory.test.ts    # 11 tests (LLM fixtures/script, STT round-trip
 - **Mocks live in `tests/mocks/` (test-land), never `src/`** — `src/adapters/` is reserved for real adapters. This was a deliberate post-review relocation; ACTIONS.md T3.1–T3.6 file paths updated accordingly.
 - **`MockStoryWorldStore` reuses the domain reducer:** `commit` runs `applyCommit` (the same validation gate the Postgres adapter enforces) and records an immutable snapshot per revision; `byRevision` reads snapshots. Auxiliary `attachMedia`/`insertKnowledge` live in separate maps merged into reads (`getWorld`/`getEntity`/`findEntityByName`/`listEntities`) so snapshots never drift.
 - **`findEntityByName` is case-insensitive and matches `aliases`** across all types per T2.3/T3.3.
-- **Mock LLM `chat` walks a script of `{ content? , toolCalls? }` steps**; the last step has no tool calls so the T5.4 agent loop terminates. `extractStructured` parses a matching fixture keyed by message substring, else an empty `StoryChangeProposal`. No real provider and no parser retry needed for mocks.
+- **Mock LLM drives only `complete`/`extractStructured`.** The extraction agent loop was migrated off `LlmClient.chat` onto the Vercel AI SDK, so scripting moved to `tests/mocks/sdk-model.ts`: `scriptedModel(steps)` wraps the SDK's `MockLanguageModelV4` and walks `{ content?, toolCalls? }` steps exactly like the old chat script. `extractStructured` parses a matching fixture keyed by message substring, else an empty `StoryChangeProposal`. No real provider and no parser retry needed for mocks.
 - **`MockStt` validates `jobId` prefix** (`mock-` by default) in `getJobStatus`/`getTranscript`; unknown job ids return `failed` / throw. `submitTranscription` returns `mock-1`, `mock-2`, … (T3.2).
 - **`MockJobQueue` executes handlers synchronously in-process** (deterministic pipeline tests); if no handler is registered for a job name the job stays `queued`. Handler failure routes to `onJobFailed` and marks the job `failed`.
 - **Contract-test suite (T4.5) deferred to Phase 4** — T3.x verification here uses the direct mock tests plus the T1.11-style commit acceptance; T4.5 remains the formal reusable adapter contract.
@@ -221,4 +222,63 @@ tests/adapters/memory.test.ts, tests/container.test.ts # import paths updated (m
 
 ### Next up
 
-Phase 5 — Application Layer: Story Tool Server & Extraction Agent (T5.1–T5.5): tool catalog (reads + staged writes + `finish`), executor (`validateEntity`/duplicate/contradiction guards, bounded `get_entities`, default 50 / max 200), `buildCommitFromStaged` with server-stamped provenance, `processTranscript` agent loop (≤ 40 tool calls / ≤ 200 fetches; mock-LLM-scripted tests).
+Phase 5 — Services Layer: Story Tool Server & Extraction Agent (T5.1–T5.5): tool catalog (reads + staged writes + `finish`), executor (`validateEntity`/duplicate/contradiction guards, bounded `get_entities`, default 50 / max 200), `CommitBuilder.buildFromStaged` with server-stamped provenance, `TranscriptProcessor.process(job)` agent loop (≤ 40 tool calls / ≤ 200 fetches) driven by the **Vercel AI SDK** (`stopWhen` budgets; SDK-scripted tests).
+
+---
+
+## Phase 5: Services Layer — Story Tool Server & Extraction Agent — COMPLETE (T5.1–T5.5)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — 15 files, 105 tests, all pass (added `tests/services/llm-agent/tools/executor.test.ts`, 14 tests; `tests/services/llm-agent/transcript-processor.test.ts`, 6 tests (AI SDK–scripted); `tests/adapters/llm-provider.test.ts`, 3 tests; `tests/container.test.ts` +1 DI wiring; `tests/domain/commits.test.ts` +2).
+
+### Files created/changed
+
+```
+src/services/llm-agent/tools/definitions.ts  # STORY_TOOL_CATALOG (14 tools) with zod input schemas (zod 4 → JSON Schema
+                                                 # via the AI SDK's zodSchema), budget constants, ToolOutput (ok/err), ToolCall type
+src/services/llm-agent/tools/sdk.ts          # buildStoryTools({store, session}) → AI SDK ToolSet (tool() + zodSchema() +
+                                                 # execute → StoryToolExecutor)
+src/services/llm-agent/tools/session.ts       # ExtractionSession + staged state, synthetic staged-* ids, Session (static helpers)
+src/services/llm-agent/tools/executor.ts      # StoryToolExecutor.execute(store, session, call): staged-write dispatch,
+                                                 # validation/dup/contradiction guards, bounded get_entities (default 50 / max 200),
+                                                 # hard budget stops
+src/services/llm-agent/tools/build-commit.ts  # CommitBuilder.build(store, session, {dictationId, textChunk}) — server-stamped
+                                                 # provenance, name→id resolution, contradiction→supersede mapping,
+                                                 # CommitBuilder.buildFromStaged
+src/services/llm-agent/tools/index.ts         # barrel
+src/services/llm-agent/transcript-processor.ts # TranscriptProcessor: constructor-DI (model + store), chunkText (16k chars)
+                                                 # + private runChunk (generateText{ model, system, prompt, tools,
+                                                 # stopWhen: [stepCountIs(40), hasToolCall('finish'), fetch/tool budgets] })
+                                                 # + buildSystemPrompt; bound as TRANSCRIPT_PROCESSOR in the container
+src/services/llm-agent/index.ts               # barrel
+src/services/index.ts                         # now exports ./llm-agent + ./llm-agent/tools (was placeholder)
+src/adapters/llm-provider.ts              # createLanguageModel(config): real AI SDK LanguageModel via @ai-sdk/openai|
+                                             # @ai-sdk/anthropic (LLM_PROVIDER + LLM_STANDARD_MODEL); mock → NotImplementedError
+src/domain/commits.ts                        # Commit.resolvedOpenQuestionIds + CommitResult.openQuestionsResolved (applyCommit)
+tests/services/llm-agent/tools/executor.test.ts    # 14 tests
+tests/services/llm-agent/transcript-processor.test.ts # 6 tests (scripted AI SDK model via tests/mocks/sdk-model.ts)
+tests/adapters/llm-provider.test.ts            # 3 tests (openai/anthropic model identity, mock refused)
+tests/domain/commits.test.ts                      # +2 tests (resolution via applyCommit)
+tests/adapters/memory.test.ts, tests/adapters/support/story-world-store-contract.ts, tests/container-ports.test.ts # Commit/CommitResult literals
+```
+
+### Decisions / deviations
+
+- **Open-question resolution got a home in the append-only reducer:** `Commit` gained `resolvedOpenQuestionIds: string[]` and `CommitResult.openQuestionsResolved`; `applyCommit` resolves (and rejects unknown/already-resolved) staged `stage_resolve_open_question` id sets on commit. This deviates from the original T5.3 spec (no question-resolution field) and is documented in ACTIONS.md T5.3.
+- **`TranscriptProcessor.process(job)` returns `ProcessTranscriptResult`** (per-chunk `ChunkTrace[]` + aggregated `commitResults`), not a bare `CommitResult` as the original T5.4 spec said. ACTIONS.md T5.4 updated to match.
+- **Staged entities get deterministic synthetic ids** (`staged-<n>-<slug>`) so the model can `get_entity`/`stage_update_entity` them before real UUIDs are assigned at commit time; the commit builder assigns UUIDs and resolves names → ids.
+- **`supersedeFactIds` keeps agent authority:** duplicate/conflicting facts auto-stage the old fact for supersede and surface a `recommendedAction: "supersede"` contradiction, but supersession only triggers when the agent explicitly calls `supersede_fact` (mirrors the §8.4 user-in-the-loop design).
+- **Services are static namespace classes** (`StoryToolExecutor`, `CommitBuilder`, `Session`, `ToolOutput`) — no instances, no container bindings; the store/LLM are threaded through each call. **Exception: `TranscriptProcessor` is constructor-DI** (`ExtractionDeps { model, store }`), bound as `TRANSCRIPT_PROCESSOR` in the composition root `buildContainer` and resolved via `container.get('TRANSCRIPT_PROCESSOR')` — it owns the container-bound agent loop while the tool layer stays provider-agnostic. The reader world is fetched per tool call (`store.getWorld`) rather than cached: the world cannot change mid-chunk because commits only happen at chunk boundaries, so every call in a chunk still sees one coherent revision.
+- **The agent loop is driven by the Vercel AI SDK (ai@7), not `LlmClient.chat`:** `TranscriptProcessor`'s `runChunk` builds the tool set from the zod catalog (`buildStoryTools`) and calls `generateText({ model, system, prompt, tools, temperature: 0, stopWhen })`. The SDK validates tool inputs against the zod schemas and assembles multi-step calls/results for free; the hand-rolled message pump and `ToolCall`/`ChatMessage`/`ChatRequest`/`ChatResult` port types were deleted from `src/container/llm.ts` (kept: `complete`, `extractStructured`). The processor is **constructor-injected** with `{ model, store }` (bound as `TRANSCRIPT_PROCESSOR`); `process(job)` takes only the job.
+- **Budget enforcement maps to `stopWhen` conditions** (T5.2/T5.4 parity): `stepCountIs(MAX_TOOL_CALLS)`, `hasToolCall('finish')`, plus `session.counters.toolCalls`/`fetchedEntities` conditions; the executor's per-call guards still reject calls past the limits. `stoppedReason` is derived from the last step + counters (`finished` / `tool-call-limit` / `fetch-limit` / `no-tool-calls`) exactly as before.
+- **Tool schemas are zod, not hand-written JSON Schema:** `STORY_TOOL_CATALOG` entries carry `inputSchema` (zod 4 strict objects; `describe()` → parameter descriptions) which the SDK converts via `zodSchema()`. `get_entities` args are still validated in the executor too (defensive `str/num/arr` parsing kept).
+- **A real LLM provider is the app default (production and development):** `LLM_PROVIDER` defaults to `openai` and requires `LLM_API_KEY` (now also supports `anthropic`; `mock` is test-only). `createLanguageModel(config)` (src/adapters/llm-provider.ts) returns an AI SDK `LanguageModel` via `@ai-sdk/openai` / `@ai-sdk/anthropic` using `LLM_STANDARD_MODEL`; tests inject `scriptedModel` instead. `buildMemoryContainer` forces `LLM_PROVIDER=mock` since it only ever wires test doubles.
+- **Transcript arrives on the payload** (`ExtractionJob.transcript`) — no extra `TranscriptStore` read hop; `TextAssetStore` said "defer until needed" so the agent only needs an AI SDK `LanguageModel` + `StoryWorldStore`.
+- **`applyCommit` remains the single validation gate** the future Postgres adapter enforces (T14.2); `CommitBuilder` routes every staged session through it.
+
+### Next up
+
+Phase 6 — STT Service (AssemblyAI adapter + `onTranscribed` webhook flow, STT→extract orchestration).

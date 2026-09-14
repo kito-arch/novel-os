@@ -19,7 +19,7 @@ Derived from IMPLEMENTATION.md. Tasks are ordered by dependency. Each task has a
 - **Acceptance:** `npm run typecheck` passes (empty `src/` is fine). Vitest runs (`npx vitest --run` exits cleanly).
 
 ### T0.3 — Configure path aliases
-- **Scope:** Set up `@/` alias in `tsconfig.json` pointing to `./src`. Create empty barrel files: `src/domain/index.ts`, `src/adapters/index.ts`, `src/application/index.ts`. Set up the **composition root on `@evyweb/ioctopus`**: `src/container/index.ts` exporting a typed `AppRegistry` (`CONFIG`), `createAppModule`, and `buildContainer`.
+- **Scope:** Set up `@/` alias in `tsconfig.json` pointing to `./src`. Create empty barrel files: `src/domain/index.ts`, `src/adapters/index.ts`, `src/services/index.ts`. Set up the **composition root on `@evyweb/ioctopus`**: `src/container/index.ts` exporting a typed `AppRegistry` (`CONFIG`), `createAppModule`, and `buildContainer`.
 - **Files:** `tsconfig.json`, barrel files, `src/container/index.ts`
 - **Deps:** T0.1, T0.2
 - **Acceptance:** `import { } from '@/domain'` resolves in a test file. `buildContainer()` returns a typed container that resolves `CONFIG`.
@@ -109,7 +109,7 @@ Derived from IMPLEMENTATION.md. Tasks are ordered by dependency. Each task has a
 The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` registry. Each port is a plain TypeScript contract (no runtime code) whose injection token will be added to `AppRegistry`.
 
 ### T2.1 — LlmClient port
-- **Scope:** Define `ModelTier`, `LlmClient` interface (`complete`, `extractStructured`, and `chat` with **native function calling**: `ToolDefinition`, `ChatMessage`, `ToolCall`, `ChatRequest`, `ChatResult`), `CompletionRequest`, `ExtractionRequest<T>`, `ExtractionResult<T>`. `chat` is the mechanism for the extraction agent loop (T5.4) — the model returns `toolCalls` in the assistant message and the application layer executes them in-process. **No SemanticStore — the extraction agent fetches entities by registry type with bounded limits instead of embedding search.**
+- **Scope (revised, user decision):** Define `ModelTier`, `LlmClient` interface (`complete`, `extractStructured`), `CompletionRequest`, `ExtractionRequest<T>`, `ExtractionResult<T>`. The original `chat` method **and** its native-function-calling types (`ToolDefinition`, `ChatMessage`, `ToolCall`, `ChatRequest`, `ChatResult`) were **removed from the port** — the extraction agent loop (T5.4) is now driven by the **Vercel AI SDK** (`generateText` + `tools` + `stopWhen`), which owns message/tool-call assembly. `complete`/`extractStructured` remain for non-loop LLM calls. **No SemanticStore — the extraction agent fetches entities by registry type with bounded limits instead of embedding search.**
 - **Files:** `src/container/llm.ts`
 - **Deps:** T0.3
 - **Acceptance:** Interface compiles. No runtime code.
@@ -155,7 +155,7 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 ## Phase 3: Memory Adapters (for tests and dev)
 
 ### T3.1 — In-memory LLM adapter ✅ Done
-- **Scope:** Implement `LlmClient` backed by a `Map<string, StoryChangeProposals>` fixture store. `extractStructured` returns the matching fixture or a sensible default. `complete` returns canned strings. `chat` returns canned tool-calls from a scripted fixture (used to drive deterministic agent-loop tests in T5.4) — the tool executor (T5.2) runs the calls in-process.
+- **Scope:** Implement `LlmClient` backed by a `Map<string, StoryChangeProposals>` fixture store. `extractStructured` returns the matching fixture or a sensible default. `complete` returns canned strings. The agent loop no longer goes through `LlmClient.chat` — deterministic loop tests (T5.4) script an AI SDK `LanguageModel` via `tests/mocks/sdk-model.ts` (`scriptedModel(steps)` → `MockLanguageModelV4`), and the T5.2 executor runs the tool calls in-process.
 - **Files:** `tests/mocks/llm.ts`
 - **Deps:** T2.1, T1.6
 - **Acceptance:** Passes a mock contract test (see T4.5).
@@ -226,94 +226,94 @@ The abstraction layer lives in `src/container/` as the `@evyweb/ioctopus` regist
 
 ---
 
-## Phase 5: Application Layer — Story Tool Server & Extraction Agent
+## Phase 5: Services Layer — Story Tool Server & Extraction Agent
 
-Design: **no embedding/semantic search.** The extraction agent gets the story's entity-type registry (types + `attributeDefs`) in the system prompt and uses native function calling (`LlmClient.chat`, T2.1) to fetch the entities it needs — bounded, server-side (per-type `limit`, default 50, max 200) — then **stages** mutations. Nothing persists until the agent finishes; then staged ops are validated and applied through `applyCommit` → `StoryWorldStore.commit`. The executor stamps `provenance` on every fact. Contradictions surface as server-side warnings on conflicting tool writes; the agent resolves them with a `supersede_fact` call.
+Design: **no embedding/semantic search.** The extraction agent gets the story's entity-type registry (types + `attributeDefs`) in the system prompt and uses **Vercel AI SDK tool calling** (ai@7 `generateText` + `tools`; see T2.1/T5.4) to fetch the entities it needs — bounded, server-side (per-type `limit`, default 50, max 200) — then **stages** mutations. Nothing persists until the agent finishes; then staged ops are validated and applied through `applyCommit` → `StoryWorldStore.commit`. The executor stamps `provenance` on every fact. Contradictions surface as server-side warnings on conflicting tool writes; the agent resolves them with a `supersede_fact` call.
 
-### T5.1 — Story tool catalog (definitions)
-- **Scope:** Define the tool catalog (name, description, JSON-Schema `parameters`): reads — `list_entity_types(storyId)`, `get_entities(storyId, entityTypeId, limit?, offset?, query?)`, `get_entity(storyId, entityId)`, `query_events(storyId, entityId?)`; writes (staged) — `stage_create_entity_type`, `stage_create_entity`, `stage_update_entity`, `stage_create_event`, `stage_create_fact`, `stage_create_relationship`, `stage_update_knowledge`, `stage_resolve_open_question`, `supersede_fact`; terminal — `finish`. Reads hit the store directly; writes stage ops in the session (nothing persists until `finish`). `get_entities` honors `limit` server-side (default 50, max 200).
-- **Files:** `src/application/story-tools/definitions.ts`
+### T5.1 — ✅ Done Story tool catalog (definitions)
+- **Scope:** Define the tool catalog. Each entry carries `description` + an **`inputSchema`** (zod 4 strict object; `describe()` supplies parameter docs — the SDK converts it via `zodSchema()`, replacing hand-written JSON-Schema `parameters`): reads — `list_entity_types(storyId)`, `get_entities(storyId, entityTypeId, limit?, offset?, query?)`, `get_entity(storyId, entityId)`, `query_events(storyId, entityId?)`; writes (staged) — `stage_create_entity_type`, `stage_create_entity`, `stage_update_entity`, `stage_create_event`, `stage_create_fact`, `stage_create_relationship`, `stage_update_knowledge`, `stage_resolve_open_question`, `supersede_fact`; terminal — `finish`. Reads hit the store directly; writes stage ops in the session (nothing persists until `finish`). `get_entities` honors `limit` server-side (default 50, max 200). Budget constants (`MAX_TOOL_CALLS=40`, `MAX_FETCHES=200`) live here. `src/services/llm-agent/tools/sdk.ts` bridges the catalog into an SDK `ToolSet` (`ai.tool({ description, inputSchema, execute })`, delegating to T5.2).
+- **Files:** `src/services/llm-agent/tools/definitions.ts`, `src/services/llm-agent/tools/sdk.ts`
 - **Deps:** T2.3, T1.2
 - **Acceptance:** Catalog compiles; every tool has a handler in T5.2. Prompt snapshot asserts bounds are declared ("max 200").
 
-### T5.2 — Story tool executor
-- **Scope:** Implement `executor(session, toolCall): Promise<ToolResult>` — executes a call against the current staged world. Reads resolve via `StoryWorldStore`; writes validate (unknown entity/type id → corrective error result so the model self-corrects; attributes validated via `validateEntity`; duplicate entity names flagged; conflicting write returns a `contradiction` warning naming the existing fact). `supersede_fact` target must exist. Tracks `toolCalls`/`fetchedEntities` counters.
-- **Files:** `src/application/story-tools/executor.ts`
+### T5.2 — ✅ Done Story tool executor
+- **Scope:** Implement `executor(session, toolCall): Promise<ToolResult>` — executes a call against the current staged world. Reads resolve via `StoryWorldStore`; writes validate (unknown entity/type id → corrective error result so the model self-corrects; attributes validated via `validateEntity`; duplicate entity names flagged; conflicting write returns a `contradiction` warning naming the existing fact). `supersede_fact` target must exist. Tracks `toolCalls`/`fetchedEntities` counters. Staged entities get stable session ids so later reads/updates can reference them before commit.
+- **Files:** `src/services/llm-agent/tools/executor.ts`
 - **Deps:** T5.1, T1.6
 - **Acceptance:** Unit test: `get_entities` caps at `limit`; invalid attribute → corrective error; duplicate entity flagged; superseding an unknown fact id rejected.
 
-### T5.3 — Commit builder from staged ops
-- **Scope:** Implement `buildCommitFromStaged(session, dictationId, chunkIndex)` — converts staged ops to a domain `Commit`, stamps `provenance` (`{ dictationId, textChunk, confidence }`) on every fact, then runs it through `applyCommit` (T1.11) as the single validation gate and persists via `StoryWorldStore.commit`.
-- **Files:** `src/application/story-tools/build-commit.ts`
+### T5.3 — ✅ Done Commit builder from staged ops
+- **Scope:** Implement `CommitBuilder.buildFromStaged(store, session, options)` — converts staged ops to a domain `Commit`, stamps `provenance` (`{ dictationId, textChunk, confidence }`) on every fact, then runs it through `applyCommit` (T1.11) as the single validation gate and persists via `StoryWorldStore.commit`. Extension: `Commit` gained `resolvedOpenQuestionIds` + `CommitResult.openQuestionsResolved` so `stage_resolve_open_question` has a home in the append-only reducer (`applyCommit` marks existing questions resolved).
+- **Files:** `src/services/llm-agent/tools/build-commit.ts`, `src/domain/commits.ts`
 - **Deps:** T1.7, T2.3
 - **Acceptance:** Staged create/update/fact ops produce a valid `CommitResult` with correct counts; invalid ops rejected.
 
-### T5.4 — Extraction agent loop (processTranscript)
-- **Scope:** Implement `processTranscript(deps, job: ExtractionJob): Promise<CommitResult>`:
-  1. Load transcript + story (`TranscriptStore`, `StoryWorldStore`).
-  2. System prompt = registry (entity types + `attributeDefs`) + tool rules + bounds; user message = transcript (chunked at ~4k tokens).
-  3. Call `llm.chat` with the catalog; for each returned `toolCall` run it via T5.2 and append results as tool messages; repeat (≤ 40 tool calls, ≤ 200 fetches per chunk).
-  4. On the model's final message (no tool calls) → T5.3 build + commit → `CommitResult`.
-  5. Empty transcript → no-op.
-- **Files:** `src/application/extraction/process.ts`
-- **Deps:** T5.1–T5.3, T2.1, T2.3, T2.4
-- **Acceptance:** Integration test with memory adapters: canned transcript → `CommitResult` with correct counts; mock LLM (T3.1) scripts tool calls for determinism; no real provider calls.
+### T5.4 — ✅ Done Extraction agent loop (TranscriptProcessor)
+- **Scope:** Implement `TranscriptProcessor` as a **constructor-DI service**: takes `ExtractionDeps { model, store }` in its constructor and is bound in the composition root `buildContainer` as `TRANSCRIPT_PROCESSOR` (`buildContainer` resolves `createLanguageModel(CONFIG)` + `STORY_WORLD_STORE` via a lazy factory). `process(job: ExtractionJob): Promise<ProcessTranscriptResult>` (per-chunk `ChunkTrace` list + aggregated `commitResults`):
+  1. Load story (`StoryWorldStore`; transcript arrives on the `ExtractionJob` payload — no extra `TranscriptStore` hop).
+  2. System prompt = registry (entity types + `attributeDefs`) + tool rules + bounds; user message = transcript (chunked at ~16k chars via `chunkText`).
+  3. **Drive the loop with the Vercel AI SDK:** `buildStoryTools` (T5.1) exposes the catalog as `ai.tool`s (`inputSchema: zodSchema(def.inputSchema)`); `runChunk` calls `generateText({ model, system, prompt, tools, temperature: 0, stopWhen: [stepCountIs(40), hasToolCall('finish'), tool/fetch counter conditions] })`. The SDK validates tool inputs, assembles tool calls + results across steps, and terminates on `finish` or budget exhaustion (≤ 40 tool calls, ≤ 200 fetches per chunk); each accepted call still runs through the T5.2 executor.
+  4. On the final step (no tool calls, or `finish`) → T5.3 build + commit → `CommitResult` (per chunk); `stoppedReason` reports `finished` / `tool-call-limit` / `fetch-limit` / `no-tool-calls`.
+  5. Empty transcript (or a chunk that stages nothing) → no-op with no commit.
+- **Files:** `src/services/llm-agent/transcript-processor.ts`, `src/services/llm-agent/tools/sdk.ts`, `src/container/registry.ts`, `src/container/index.ts`
+- **Deps:** T5.1–T5.3, T2.1, T2.3
+- **Acceptance:** Integration test with memory adapters: canned transcript → `CommitResult` with correct counts; scripted AI SDK model (`tests/mocks/sdk-model.ts`) scripts tool calls for determinism; no real provider calls. Container test: `container.get('TRANSCRIPT_PROCESSOR')` returns a singleton with injected `model` + `store`.
 
-### T5.5 — Extraction agent tests
-- **Scope:** Vitest tests for `processTranscript` (memory adapters + scripted mock LLM): normal extraction; empty transcript (no-op); contradiction → agent supersedes; **brand-new entity type** introduced (e.g. "The Relentless is a Falcon-class cruiser…" registers a `starship` type); tool-call budget exceeded → graceful stop with partial commit.
-- **Files:** `tests/application/extraction/process.test.ts`
+### T5.5 — ✅ Done Extraction agent tests
+- **Scope:** Vitest tests for `TranscriptProcessor.process(job)` (`tests/services/llm-agent/transcript-processor.test.ts`, scripted AI SDK model) plus direct executor tests (`tests/services/llm-agent/tools/executor.test.ts`): normal extraction; empty transcript (no-op); model stops without tools (no-op); **brand-new entity type** introduced (registering a `starship` type in-session and referencing it); contradiction → old fact superseded via `supersede_fact`; tool-call budget exceeded → graceful stop with partial commit; fetch budget exceeded on `get_entities` → graceful stop.
+- **Files:** `tests/services/llm-agent/transcript-processor.test.ts`, `tests/services/llm-agent/tools/executor.test.ts`, `tests/mocks/sdk-model.ts`, `tests/adapters/llm-provider.test.ts`
 - **Deps:** T5.4, T3.6
-- **Acceptance:** All tests pass.
+- **Acceptance:** All tests pass. 105 tests green; typecheck + lint clean.
 
 ---
 
-## Phase 6: Application Layer — Bounded Context Assembly (reasoning)
+## Phase 6: Services Layer — Bounded Context Assembly (reasoning)
 
 Design: the extraction path no longer builds context (the agent fetches via tools). This phase provides bounded, schema-rendered context for the **reasoning** features (ask/analyze): match mentions against names + aliases across all types, render attributes per `attributeDefs`, cap tokens. No embeddings, no vector search.
 
 ### T6.1 — ContextBuilder (registry-bounded)
 - **Scope:** Implement `buildContext(storyId, mentions: string[]): Promise<ContextPackage>` — resolves mentions against names + aliases across ALL types (bounded to ≤ 10 matches), renders each entity's attributes per its `attributeDefs`, attaches relationships, recent events (last 10), knowledge claims, open questions. Caps output at ~3–4k tokens.
-- **Files:** `src/application/context/builder.ts`
+- **Files:** `src/services/context/builder.ts`
 - **Deps:** T2.3, T1.6
 - **Acceptance:** Integration test: world with 5 characters + 2 starships, mentions of a character + a starship → context contains only those + their relations + declared attributes. Token cap respected (words × 1.3 as proxy).
 
 ### T6.2 — ContextBuilder token cap test
 - **Scope:** Create a large fictional world (80k words equivalent) and assert `buildContext` output stays under 4k tokens.
-- **Files:** `tests/application/context/builder.test.ts`
+- **Files:** `tests/services/context/builder.test.ts`
 - **Deps:** T6.1
 - **Acceptance:** Test passes. Cost guard verified.
 
 ### T6.3 — Entity mention parser
 - **Scope:** Implement `parseMentions(text: string, existingEntities: Entity[]): string[]` — regex/heuristic: case-insensitive, longest-match substring against known names + aliases, **across all entity types**.
-- **Files:** `src/application/context/mention-parser.ts`
+- **Files:** `src/services/context/mention-parser.ts`
 - **Deps:** T1.2
 - **Acceptance:** "Sarah walked onto the Relentless bridge" + world containing character `Sarah` and starship `The Relentless` → `["Sarah", "The Relentless"]`. Handles aliases.
 
 ---
 
-## Phase 7: Application Layer — Reasoning
+## Phase 7: Services Layer — Reasoning
 
 ### T7.1 — "Ask my story anything"
 - **Scope:** Implement `askStory(deps, storyId, question): Promise<string>`. Parse mentions from the question (T6.3), build bounded context via ContextBuilder (T6.1), format into a prompt, call `standard`-tier LLM, return the answer.
-- **Files:** `src/application/reasoning/ask.ts`
+- **Files:** `src/services/reasoning/ask.ts`
 - **Deps:** T6.1, T2.1
 - **Acceptance:** Unit test: given a world where "Sarah knows John killed Michael", question "Does Sarah know who killed Michael?" → answer includes "yes".
 
 ### T7.2 — Knowledge query: "Does character X know fact Y?"
 - **Scope:** Implement `doesEntityKnow(storyId, entityId, factDescription): Promise<KnowledgeStatus>`. Queries the `knowledge` table for the entity + matching fact, considers timeline (what has the entity learned by this point in the story).
-- **Files:** `src/application/reasoning/knowledge.ts`
+- **Files:** `src/services/reasoning/knowledge.ts`
 - **Deps:** T2.3, T1.4
 - **Acceptance:** Unit test: Sarah learned "John killed Michael" in chapter 8. Query at chapter 10 → known. Query at chapter 5 → unknown.
 
 ### T7.3 — Continuity checker
 - **Scope:** Implement `checkContinuity(storyId, analysisType): Promise<ContinuityReport[]>`. Analysis types: `all`, `contradictions`, `anachronisms`, `motivation-gaps`, `relationship-state`, `dangling-threads`. Uses `best`-tier LLM with selective context.
-- **Files:** `src/application/reasoning/continuity.ts`
+- **Files:** `src/services/reasoning/continuity.ts`
 - **Deps:** T2.1, T2.3, T6.1
 - **Acceptance:** Unit test: world with Sarah having green eyes ch.2 and blue eyes ch.14 → contradiction detected. Dangling thread (photograph introduced ch.3, not referenced for 11 chapters) detected.
 
 ### T7.4 — Reasoning barrel export
-- **Scope:** Re-export `askStory`, `doesEntityKnow`, `checkContinuity` from `src/application/reasoning/index.ts`.
-- **Files:** `src/application/reasoning/index.ts`
+- **Scope:** Re-export `askStory`, `doesEntityKnow`, `checkContinuity` from `src/services/reasoning/index.ts`.
+- **Files:** `src/services/reasoning/index.ts`
 - **Deps:** T7.1–T7.3
 - **Acceptance:** Imports work.
 
@@ -355,23 +355,23 @@ Design: the extraction path no longer builds context (the agent fetches via tool
 
 ## Phase 9: OpenAI LLM Adapter
 
-### T9.1 — OpenAI LLM adapter
-- **Scope:** Implement `LlmClient` backed by OpenAI API. `complete` sends chat completion. `extractStructured` sends JSON mode + system prompt, parses response through Zod schema, retries once on parse failure with error feedback. Tier routing: `cheap` → `gpt-5-nano`, `standard` → `gpt-5-mini`, `best` → `gpt-5-pro`.
-- **Files:** `src/adapters/openai/llm.ts`
+### T9.1 — ✅ Done (partial) Real LLM model provider (`createLanguageModel`)
+- **Scope:** With the AI SDK migration (T5.4), the extraction loop takes an SDK `LanguageModel` rather than `LlmClient`, so real-provider wiring now happens in `src/adapters/llm-provider.ts`: `createLanguageModel(config)` switches on `LLM_PROVIDER` — `createOpenAI({ apiKey }).languageModel(config.LLM_STANDARD_MODEL)` for `openai`, `createAnthropic({ apiKey }).languageModel(...)` for `anthropic`, and `mock` → `NotImplementedError` (scripted models live in `tests/mocks`). Not yet built: the `LlmClient`-backed OpenAI adapter for `complete`/`extractStructured` (`complete` sends chat completion; `extractStructured` sends JSON mode + Zod parse with one parse-failure retry; tier routing `cheap` → `gpt-5-nano`, `standard` → `gpt-5-mini`, `best` → `gpt-5-pro` stays the plan).
+- **Files:** `src/adapters/llm-provider.ts`, `src/adapters/index.ts`, `tests/adapters/llm-provider.test.ts`
 - **Deps:** T2.1, T1.6
-- **Acceptance:** Passes adapter contract test (mock OpenAI responses in test via `msw` or fixture injection). `extractStructured` with a valid schema returns parsed data.
+- **Acceptance:** Tests assert the resolved model's `provider` starts with `openai`/`anthropic` and `modelId === 'gpt-5-mini'`; `createLanguageModel({ LLM_PROVIDER: 'mock' })` throws with a pointer to `tests/mocks`.
 
 ### T9.2 — OpenAI adapter barrel export
-- **Scope:** Re-export from `src/adapters/openai/index.ts`.
+- **Scope:** (Future) `src/adapters/openai/index.ts` re-exports the OpenAI-backed `LlmClient`.
 - **Files:** `src/adapters/openai/index.ts`
 - **Deps:** T9.1
-- **Acceptance:** `import { openaiLlm } from '@/adapters/openai'` works.
+- **Acceptance:** `import { openaiLlm } from '@/adapters/openai'` works once the adapter is built.
 
 ### T9.3 — Update production buildContainer for OpenAI
-- **Scope:** When `LLM_PROVIDER=openai`, wire `openaiLlm` into the container.
+- **Scope:** (Future) When `LLM_PROVIDER=openai`, wire the OpenAI-backed LLM into the container (even without this, `createLanguageModel` + `LLM_PROVIDER` already resolve a real `LanguageModel` for the extraction loop).
 - **Files:** `src/container/index.ts`
 - **Deps:** T9.2
-- **Acceptance:** End-to-end test: `processTranscript` with real OpenAI (using a tiny transcript) returns a valid `CommitResult`.
+- **Acceptance:** End-to-end test: `TranscriptProcessor.process(job)` with real OpenAI (using a tiny transcript) returns a valid `CommitResult`.
 
 ---
 
@@ -402,7 +402,7 @@ SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeo
 - **Acceptance:** Passes adapter contract test. `enqueue` + `onJobCompleted` round-trip works against LocalStack; adheres to `maxConcurrency` under a burst of jobs.
 
 ### T11.2 — Worker entry point
-- **Scope:** Create `workers/index.ts` that boots an SQS consumer for the `extraction` job type. Worker uses `buildContainer(process.env)` and calls `processTranscript`. Handles graceful shutdown (SIGTERM).
+- **Scope:** Create `workers/index.ts` that boots an SQS consumer for the `extraction` job type. Worker uses `buildContainer(process.env)` and calls `container.get('TRANSCRIPT_PROCESSOR').process(job)`. Handles graceful shutdown (SIGTERM).
 - **Files:** `workers/index.ts`
 - **Deps:** T11.1, T5.4, T4.3
 - **Acceptance:** `npx tsx workers/index.ts` starts and processes a test job.
@@ -547,13 +547,13 @@ SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeo
 
 ### T14.3 — Cost guard test
 - **Scope:** Create a fictional 80k-word corpus (generated programmatically). Run `ContextBuilder` 100 times with random transcript chunks. Assert average context package stays under 4k tokens.
-- **Files:** `tests/application/context/cost-guard.test.ts`
+- **Files:** `tests/services/context/cost-guard.test.ts`
 - **Deps:** T6.1
 - **Acceptance:** Test passes. Average < 4k tokens.
 
 ### T14.4 — Contradiction edge case tests
 - **Scope:** Test contradiction handling with: same fact restated (no contradiction flagged), contradictory facts (tool warning surfaces), supersede flow (agent calls `supersede_fact` → old claim marked superseded), implicit vs explicit (strata preserved), contradictory facts across chapters (anachronism).
-- **Files:** `tests/application/extraction/supersede.test.ts`
+- **Files:** `tests/services/llm-agent/tools/supersede.test.ts`
 - **Deps:** T5.5
 - **Acceptance:** All edge cases handled correctly.
 

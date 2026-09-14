@@ -2,7 +2,8 @@ import { createContainer, createModule } from "@evyweb/ioctopus";
 import type { TypedContainer } from "@evyweb/ioctopus";
 import type { AppConfig } from "@/config";
 import { loadConfig } from "@/config";
-import { SystemClock } from "@/adapters";
+import { SystemClock, createLanguageModel } from "@/adapters";
+import { TranscriptProcessor } from "@/services/llm-agent/transcript-processor";
 import type { AppRegistry } from "./registry";
 
 export * from "./registry";
@@ -28,6 +29,18 @@ export function buildContainer(config: AppConfig = loadConfig()): TypedContainer
   const container = createContainer<AppRegistry>();
   container.load("app", createAppModule(config));
   container.bind("CLOCK").toClass(SystemClock);
+  // The extraction agent is wired with its real dependencies: the AI SDK
+  // LanguageModel (createLanguageModel, T9) + the story world store. The
+  // factory is lazy — touched only when TRANSCRIPT_PROCESSOR is requested.
+  container
+    .bind("TRANSCRIPT_PROCESSOR")
+    .toFactory(
+      (resolve) =>
+        new TranscriptProcessor({
+          model: createLanguageModel(resolve("CONFIG")),
+          store: resolve("STORY_WORLD_STORE"),
+        }),
+    );
 
   if (config.STT_PROVIDER === "assemblyai") {
     throw new NotImplementedError(

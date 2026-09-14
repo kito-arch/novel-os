@@ -127,17 +127,19 @@ novel-os/
 │   │   └── sqs/
 │   │       ├── queue.ts             # SQS-based JobQueue
 │   │       └── index.ts
-│   ├── application/                  # Use cases / application services
+│   ├── services/                     # Use cases / service layer
 │   │   ├── dictation/
 │   │   │   ├── process-dictation.ts  # Orchestrates: audio → STT → extract → commit
 │   │   │   └── index.ts
-│   │   ├── extraction/
-│   │   │   └── process.ts           # processTranscript — agent loop over the tool server (T5.4)
-│   │   ├── story-tools/
-│   │   │   ├── definitions.ts       # Tool catalog (name/description/JSON-Schema) + fetch bounds
-│   │   │   ├── executor.ts          # Executes tool calls against the staged world (T5.2)
-│   │   │   ├── build-commit.ts      # Staged ops → Commit via applyCommit (T5.3)
-│   │   │   └── index.ts
+│   │   ├── llm-agent/
+│   │   │   ├── transcript-processor.ts  # TranscriptProcessor — container-bound LLM agent loop (constructor DI, T5.4)
+│   │   │   └── tools/
+│   │   │       ├── definitions.ts       # Tool catalog (name/description/zod schema) + fetch bounds (T5.1)
+│   │   │       ├── executor.ts          # Executes tool calls against the staged world (T5.2)
+│   │   │       ├── sdk.ts               # buildStoryTools — catalog → AI SDK ToolSet (ai.tool + zodSchema)
+│   │   │       ├── session.ts           # ExtractionSession + staged state, budget counters
+│   │   │       ├── build-commit.ts      # Staged ops → Commit via applyCommit (T5.3)
+│   │   │       └── index.ts
 │   │   ├── context/
 │   │   │   ├── builder.ts           # Registry-bounded context for reasoning (T6.1)
 │   │   │   ├── mention-parser.ts    # Name/alias → mentions across all types (T6.3)
@@ -948,7 +950,7 @@ export interface CompletionResult {
 }
 
 // T is the inferred output of the Zod schema. Concrete extraction schemas live
-// in the domain (e.g. StoryChangeProposal) and are passed by the application layer.
+// in the domain (e.g. StoryChangeProposal) and are passed by the services layer.
 export interface ExtractionRequest<T> {
   tier: ModelTier;
   systemPrompt: string;
@@ -963,57 +965,29 @@ export interface ExtractionResult<T> {
 
 // Native function calling: the extraction agent loop (see §8.1) drives the
 // LLM through multi-turn `chat` calls; the model returns `toolCalls` inside
-// the assistant message and the application layer executes them in-process.
-export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
-
-export interface ChatMessage {
-  role: ChatRole;
-  // Nullable so assistant "tool-use" messages can carry arguments without text.
-  content: string | null;
-  // Present on assistant messages that request tool calls.
-  toolCalls?: ToolCall[];
-  // Present on tool messages: which call this result answers.
-  toolCallId?: string;
-}
-
-export interface ToolCall {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-}
-
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;  // JSON-Schema
-}
-
-export interface ChatRequest {
-  messages: ChatMessage[];
-  tools?: ToolDefinition[];
-  tier?: ModelTier;
-  temperature?: number;
-  maxTokens?: number;
-}
-
-export interface ChatResult {
-  // The assistant message: final text and/or requested tool calls.
-  message: ChatMessage;
-  usage: TokenUsage;
-}
-
+// the assistant message and the services layer executes them in-process.
+// REVISION (see below): these hand-rolled types were removed from the port —
+// the Vercel AI SDK now owns tool-call/message assembly.
 export interface LlmClient {
   complete(request: CompletionRequest): Promise<CompletionResult>;
 
   // JSON-mode structured extraction; the adapter validates the response against
   // request.schema and re-prompts once on a parse failure.
   extractStructured<T>(request: ExtractionRequest<T>): Promise<ExtractionResult<T>>;
-
-  // Multi-turn chat with native function calling. The adapter does NOT execute
-  // tools — it returns the requested `toolCalls` on the assistant message for
-  // the caller to run and feed back as tool messages.
-  chat(request: ChatRequest): Promise<ChatResult>;
 }
+```
+
+**Revision note (AI SDK migration, T2.1/T5.4):** the port originally also defined native-function-calling types (`ChatRole`, `ChatMessage`, `ToolCall`, `ToolDefinition`, `ChatRequest`, `ChatResult`) and an `LlmClient.chat` method (below). All of that was **removed** from the shipped port (`src/container/llm.ts`) — the extraction agent loop is driven by the Vercel AI SDK (`generateText` + `tools` + `stopWhen`, see §8.1) which owns message/tool-call assembly. Tool schemas are zod (`STORY_TOOL_CATALOG` in `src/services/llm-agent/tools/definitions.ts`) bridged to the SDK via `zodSchema()` in `buildStoryTools` (`src/services/llm-agent/tools/sdk.ts`). The removed hand-rolled types (historical design):
+
+```typescript
+// Removed: native function calling types the AI SDK now provides internally.
+export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
+export interface ChatMessage { role: ChatRole; content: string | null; toolCalls?: ToolCall[]; toolCallId?: string; }
+export interface ToolCall { id: string; name: string; arguments: Record<string, unknown>; }
+export interface ToolDefinition { name: string; description: string; parameters: Record<string, unknown>; /* JSON-Schema */ }
+export interface ChatRequest { messages: ChatMessage[]; tools?: ToolDefinition[]; tier?: ModelTier; temperature?: number; maxTokens?: number; }
+export interface ChatResult { message: ChatMessage; usage: TokenUsage; }
+// Removed: LlmClient.chat(request: ChatRequest): Promise<ChatResult>;
 ```
 
 ### 6.3 Story World Store Port
@@ -1240,52 +1214,50 @@ const store = container.get('STORY_WORLD_STORE');  // StoryWorldStore
 
 ### 8.1 Story Tool Catalog (definitions)
 
-Design: **no embedding/semantic search.** The extraction agent is driven by native function calling over a tool catalog. Reads resolve through `StoryWorldStore`; writes **stage** ops in a session that persists nothing until `finish`. The catalog is a data table — a future MCP server exposes the same catalog via `tools/list` + `tools/call`.
+Design: **no embedding/semantic search.** The extraction agent is driven by Vercel AI SDK tool calling over a tool catalog. Reads resolve through `StoryWorldStore`; writes **stage** ops in a session that persists nothing until `finish`. The catalog is a data table — a future MCP server exposes the same catalog via `tools/list` + `tools/call`.
 
 ```typescript
-// src/application/story-tools/definitions.ts
-
-import type { ToolDefinition } from '../../container/llm';
+// src/services/llm-agent/tools/definitions.ts — zod is the single source of truth
+// for tool schemas; the AI SDK converts them via zodSchema() (see sdk.ts below).
 
 export const ENTITY_FETCH_LIMIT = 50;  // default per-type fetch
 export const ENTITY_FETCH_MAX = 200;   // hard cap, enforced by the executor
+export const MAX_TOOL_CALLS = 40;      // per chunk, stopWhen budget
 
-export const STORY_TOOLS: ToolDefinition[] = [
-  {
-    name: 'list_entity_types',
-    description: 'List the story\'s entity-type registry (types + attributeDefs).',
-    parameters: { type: 'object', properties: { storyId: { type: 'string' } } },
-  },
-  {
-    name: 'get_entities',
-    description: 'Fetch entities of one type, bounded (default 50, max 200).',
-    parameters: { type: 'object', properties: { storyId: { type: 'string' }, entityTypeId: { type: 'string' }, limit: { type: 'integer' }, offset: { type: 'integer' }, query: { type: 'string' } } },
-  },
-  {
-    name: 'get_entity',
-    description: 'Fetch one entity by id.',
-    parameters: { type: 'object', properties: { storyId: { type: 'string' }, entityId: { type: 'string' } } },
-  },
-  {
-    name: 'query_events',
-    description: 'Fetch events, optionally filtered to one entity.',
-    parameters: { type: 'object', properties: { storyId: { type: 'string' }, entityId: { type: 'string' } } },
-  },
-  {
-    name: 'stage_create_entity_type',   // + stage_create_entity, stage_update_entity,
-    description: 'Stage a write. Nothing persists until the finish tool is called.',
-    parameters: { type: 'object', properties: { storyId: { type: 'string' } } },
-  },
-  // ... stage_create_event, stage_create_fact, stage_create_relationship,
-  //     stage_update_knowledge, stage_resolve_open_question, supersede_fact
-  { name: 'finish', description: 'End the session and commit all staged writes.', parameters: {} },
-];
+export const STORY_TOOL_CATALOG: Record<StoryToolName, StoryToolDefinition> = {
+  list_entity_types:   { description: "List the story's entity-type registry (types + attributeDefs).",
+                         inputSchema: z.strictObject({ storyId: z.string() }) },
+  get_entities:        { description: 'Fetch entities of one type, bounded (default 50, max 200).',
+                         inputSchema: z.strictObject({ storyId: z.string(), entityTypeId: z.string(),
+                                                       limit: z.number().int().describe('default 50, max 200').optional(),
+                                                       offset: z.number().int().optional(), query: z.string().optional() }) },
+  get_entity:          { description: 'Fetch one entity by id.',
+                         inputSchema: z.strictObject({ storyId: z.string(), entityId: z.string() }) },
+  query_events:        { description: 'Fetch events, optionally filtered to one entity.',
+                         inputSchema: z.strictObject({ storyId: z.string(), entityId: z.string().optional() }) },
+  stage_create_entity_type:   { description: 'Stage a new entity type.', inputSchema: z.strictObject({ /* ... */ }) },
+  stage_create_entity:        { description: 'Stage a new entity.', inputSchema: z.strictObject({ /* ... */ }) },
+  stage_update_entity:        { description: 'Stage entity attribute updates.', inputSchema: z.strictObject({ /* ... */ }) },
+  stage_create_event:         { description: 'Stage an event.', inputSchema: z.strictObject({ /* ... */ }) },
+  stage_create_fact:          { description: 'Stage a fact.', inputSchema: z.strictObject({ /* ... */ }) },
+  stage_create_relationship:  { description: 'Stage a relationship.', inputSchema: z.strictObject({ /* ... */ }) },
+  stage_update_knowledge:     { description: 'Stage a knowledge claim.', inputSchema: z.strictObject({ /* ... */ }) },
+  stage_resolve_open_question:{ description: 'Stage resolution of an open question.', inputSchema: z.strictObject({ /* ... */ }) },
+  supersede_fact:      { description: 'Supersede an existing fact id.', inputSchema: z.strictObject({ /* ... */ }) },
+  finish:              { description: 'End the session and commit all staged writes.',
+                         inputSchema: z.strictObject({}) },
+};
 ```
+
+`strictObject` === `strict()` → the SDK maps it to `additionalProperties: false`; every property carries `describe()` so the model sees parameter docs. **`buildStoryTools({ store, session })`** (`src/services/llm-agent/tools/sdk.ts`) wraps the catalog with `ai.tool({ description, inputSchema: zodSchema(def.inputSchema), execute })`; `execute` maps the SDK's typed input + `options.toolCallId` into a `ToolCall` and delegates to the §8.2 executor (which keeps its imperative `str/num/arr` coercion — it stays provider-agnostic).
 
 ### 8.2 Tool Executor (staged operations)
 
 ```typescript
-// src/application/story-tools/executor.ts
+// src/services/llm-agent/tools/executor.ts
+// ToolCall here is the local type from ./definitions (id, name, arguments) —
+// the SDK bridge (§8.1) maps SDK tool inputs + toolCallId onto it, so the
+// executor stays provider-agnostic.
 
 export interface ToolSession {
   storyId: string;
@@ -1330,10 +1302,12 @@ export async function executor(session: ToolSession, call: ToolCall): Promise<To
 
 ### 8.3 Commit Builder (staged → applyCommit)
 
+> Note: the snippet below is illustrative and predates the services-as-static-classes refactor (as-built code uses `CommitBuilder.build(store, session, { dictationId, textChunk })` / `CommitBuilder.buildFromStaged`).
+
 The session's staged writes — entity types, entities, attributes, events, facts, relationships, knowledge, superseded facts, resolved open questions — are folded into a domain `Commit`. `applyCommit` is the single validation gate; `StoryWorldStore.commit` persists it. Provenance is stamped **server-side** (`dictationId` / text chunk / confidence), never by the model.
 
 ```typescript
-// src/application/story-tools/build-commit.ts
+// src/services/llm-agent/tools/build-commit.ts
 
 export async function buildCommitFromStaged(
   session: ToolSession,
@@ -1362,58 +1336,50 @@ export async function buildCommitFromStaged(
 }
 ```
 
-### 8.4 Extraction Agent (processTranscript loop)
+### 8.4 Extraction Agent (TranscriptProcessor loop)
+
+> Note: the snippet below is illustrative and predates the as-built refactors (as-built `TranscriptProcessor` is constructor-DI — `new TranscriptProcessor({ model, store })`, bound as `TRANSCRIPT_PROCESSOR` in the composition root `buildContainer` and resolved via `container.get('TRANSCRIPT_PROCESSOR')`; `CommitBuilder.buildFromStaged(store, session, options)` stays in `src/services/`).
 
 ```typescript
-// src/application/extraction/process.ts
+// src/services/llm-agent/transcript-processor.ts — AI SDK agent loop (as-built shape)
 
-const MAX_TOOL_CALLS = 40;       // per chunk — checked in the loop (session counter)
-const MAX_FETCHED_ENTITIES = 200;  // enforced by the get_entities executor
+export class TranscriptProcessor {
+  private readonly deps: ExtractionDeps;            // { model, store } from the container
+  constructor(deps: ExtractionDeps) { this.deps = deps; }
 
-export async function processTranscript(
-  container: Container,
-  job: ExtractionJob
-): Promise<CommitResult> {
-  const dictation = await container.transcriptStore.findById(job.dictationId);
-  const story = await container.store.getWorld(dictation.storyId);
-  if (!dictation.transcript?.trim()) return noOpResult(dictation.storyId);
-
-  const registry = story?.entityTypes ?? [];
-  for (const chunk of chunkTranscript(dictation.transcript)) {
-    // New tool session per chunk; writes only persist via finish.
-    const session: ToolSession = { storyId: dictation.storyId, dictationId: dictation.id, chunkIndex: 0, staged: emptyStaged(), contradictions: [], toolCalls: 0, fetchedEntities: 0 };
-    const messages: ChatMessage[] = [{ role: 'user', content: chunk }];
-
-    while (true) {
-      const result = await container.llm.chat({
-        tier: 'standard',
-        messages: [{ role: 'system', content: extractionSystemPrompt(registry, ENTITY_FETCH_MAX) }, ...messages],
-        tools: STORY_TOOLS,
-      });
-
-      const calls = result.message.toolCalls ?? [];
-      if (!calls.length || session.toolCalls >= MAX_TOOL_CALLS) {
-        return buildCommitFromStaged(session, container.store);   // finish
-      }
-
-      messages.push(result.message);
-      for (const call of calls) {
-        const toolResult = await executor(session, call);
-        messages.push({ role: 'tool', content: JSON.stringify(toolResult), toolCallId: call.id });
-      }
-    }
-  }
+  // Per chunk: new session; writes only persist via finish. The SDK owns
+  // message/tool-call assembly — no manual ChatMessage pump, no LlmClient.chat.
+private async runChunk(session: ExtractionSession, textChunk: string): Promise<ChunkTrace> {
+    const tools = buildStoryTools({ store: this.deps.store, session });
+    const { steps } = await generateText({
+      model: this.deps.model,
+    system: buildSystemPrompt(worldEntityTypes, ENTITY_FETCH_MAX),
+    prompt: textChunk,
+    tools,
+    temperature: 0,
+    stopWhen: [
+      stepCountIs(MAX_TOOL_CALLS),
+      hasToolCall('finish'),
+      () => session.counters.toolCalls >= MAX_TOOL_CALLS,
+      () => session.counters.fetchedEntities >= ENTITY_FETCH_MAX,
+    ],
+  });
+  const stopped = stoppedReason({ steps, session });            // finished | tool-call-limit | fetch-limit | no-tool-calls
+  const commitResult = await CommitBuilder.buildFromStaged(     // §8.3
+    this.deps.store, session, { dictationId, textChunk }
+  );
+  return { stoppedReason: stopped, commitResult, toolCalls: steps.length, ... };
 }
 ```
 
-The system prompt always embeds the registry (types + `attributeDefs`). The model never sees the whole story — it fetches per-type subsets via `get_entities`, and every fetch is truncated to `ENTITY_FETCH_MAX` server-side (T5.1/T5.2). Budgets are enforced by the loop (tool-call counter) and the executor (fetch counter), not by `ChatRequest` fields.
+The system prompt always embeds the registry (types + `attributeDefs`). The model never sees the whole story — it fetches per-type subsets via `get_entities`, and every fetch is truncated to `ENTITY_FETCH_MAX` server-side (T5.1/T5.2). Budgets are enforced by the SDK `stopWhen` conditions (tool-call step cap + `finish`), the executor (fetch counter rejects past the cap), and the `session.counters` conditions — not by `ChatRequest` fields.
 
 ### 8.5 Context Builder (registry-bounded — reasoning path)
 
 The extraction path fetches via tools (§8.1–§8.4). The reasoning features (`askStory`, `doesEntityKnow`, `runContinuityCheck`) get bounded, schema-rendered context instead: mentions are matched against names/aliases **across all entity types** (no embeddings, no vector search), attributes are rendered per each type's `attributeDefs`, and output is capped.
 
 ```typescript
-// src/application/context/builder.ts
+// src/services/context/builder.ts
 
 export interface ContextPackage {
   entities: Array<{ id: string; typeName: string; name: string; aliases: string[]; attributes: Record<string, AttributeValue> }>;
@@ -1443,7 +1409,7 @@ export async function buildContext(
 ### 8.6 Reasoning Services
 
 ```typescript
-// src/application/reasoning/ask-story.ts
+// src/services/reasoning/ask-story.ts
 
 import type { Container } from '../../container';
 import { buildContext, parseMentions } from '../context/builder';
@@ -1475,7 +1441,7 @@ ${params.question}`;
 ```
 
 ```typescript
-// src/application/reasoning/knowledge-query.ts
+// src/services/reasoning/knowledge-query.ts
 
 import type { Container } from '../../container';
 
@@ -1521,7 +1487,7 @@ ${knowledge.map(k => `- ${k.knowledgeText} (status: ${k.status}, learned via: ${
 ```
 
 ```typescript
-// src/application/reasoning/continuity-checker.ts
+// src/services/reasoning/continuity-checker.ts
 
 import type { Container } from '../../container';
 
@@ -1734,7 +1700,6 @@ export async function POST(request: NextRequest) {
 // workers/extraction-worker.ts
 
 import { buildContainer } from '../src/container';
-import { processTranscript } from '../src/application/extraction/process';
 import { ExtractionJob } from '../src/container/job-queue';
 
 async function startWorker() {
@@ -1743,9 +1708,9 @@ async function startWorker() {
   container.queue.onJobCompleted('extraction', async (job: ExtractionJob) => {
     console.log(`[Extraction] Processing ${job.dictationId}`);
     try {
-      // ProcessTranscript drives the agent loop: llm.chat + tool executor
-      // (T5.4) → staged writes validated via applyCommit → StoryWorldStore.commit.
-      const result = await processTranscript(container, job);
+      // TranscriptProcessor.process drives the agent loop: AI SDK generateText +
+      // story tools (T5.4) → staged writes validated via applyCommit → StoryWorldStore.commit.
+      const result = await container.get("TRANSCRIPT_PROCESSOR").process(job);
       console.log(`[Extraction] Completed:`, result);
     } catch (error) {
       console.error(`[Extraction] Failed for ${job.dictationId}:`, error);
@@ -1765,7 +1730,7 @@ startWorker();
 
 import { NextRequest, NextResponse } from 'next/server';
 import { buildContainer } from '@/container';
-import { askStory } from '@/src/application/reasoning/ask-story';
+import { askStory } from '@/src/services/reasoning/ask-story';
 
 export async function POST(
   request: NextRequest,
@@ -1792,7 +1757,7 @@ export async function POST(
 
 import { NextRequest, NextResponse } from 'next/server';
 import { buildContainer } from '@/container';
-import { doesEntityKnow } from '@/src/application/reasoning/knowledge-query';
+import { doesEntityKnow } from '@/src/services/reasoning/knowledge-query';
 
 export async function POST(
   request: NextRequest,

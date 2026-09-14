@@ -11,8 +11,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.53",
+    "@ai-sdk/openai": "^4.0.66",
     "@evyweb/ioctopus": "^1.4.1",
     "@trpc/server": "^11.18.0",
+    "ai": "^7.0.99",
     "drizzle-orm": "^0.45.2",
     "nanoid": "^6.0.1",
     "next": "16.3.5",

@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { configSchema, loadConfig } from "@/config";
 
 describe("loadConfig", () => {
-  it("returns dev defaults when env is empty", () => {
-    const config = loadConfig({});
+  it("returns dev defaults when env is empty (mock provider override)", () => {
+    const config = loadConfig({ LLM_PROVIDER: "mock" });
     expect(config.STT_PROVIDER).toBe("mock");
     expect(config.LLM_PROVIDER).toBe("mock");
     expect(config.LLM_CHEAP_MODEL).toBe("gpt-5-nano");
@@ -44,13 +44,25 @@ describe("loadConfig", () => {
     );
   });
 
+  it("throws when LLM_PROVIDER=anthropic but LLM_API_KEY is missing", () => {
+    expect(() => loadConfig({ LLM_PROVIDER: "anthropic" })).toThrow(
+      /LLM_API_KEY is required/
+    );
+  });
+
   it("rejects unsupported provider values", () => {
     expect(() => loadConfig({ STT_PROVIDER: "bogus" })).toThrow();
     expect(() => loadConfig({ LLM_PROVIDER: "watson" })).toThrow();
   });
 
+  it("defaults to a real LLM provider (openai) and requires a key", () => {
+    expect(() => loadConfig({})).toThrow(/LLM_API_KEY is required when LLM_PROVIDER=openai/);
+    const config = loadConfig({ LLM_API_KEY: "dev-key" });
+    expect(config.LLM_PROVIDER).toBe("openai");
+  });
+
   it("strips unknown env keys but keeps known ones", () => {
-    const config = loadConfig({ PATH: "/usr/bin", LLM_CHEAP_MODEL: "custom-model" });
+    const config = loadConfig({ PATH: "/usr/bin", LLM_PROVIDER: "mock", LLM_CHEAP_MODEL: "custom-model" });
     expect(config.LLM_CHEAP_MODEL).toBe("custom-model");
     expect("PATH" in config).toBe(false);
   });
@@ -58,6 +70,10 @@ describe("loadConfig", () => {
 
 describe("configSchema", () => {
   it("parses a minimal valid object", () => {
-    expect(configSchema.parse({}).LLM_PROVIDER).toBe("mock");
+    expect(configSchema.parse({ LLM_PROVIDER: "mock" }).LLM_PROVIDER).toBe("mock");
+  });
+
+  it("parses the default real provider when an API key is present", () => {
+    expect(configSchema.parse({ LLM_API_KEY: "k" }).LLM_PROVIDER).toBe("openai");
   });
 });

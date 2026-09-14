@@ -8,7 +8,7 @@ import type { StoryWorld } from "@/domain/story-world";
 
 // Reusable contract suite for any StoryWorldStore implementation (memory,
 // Postgres in T8.2, …). A conforming store must satisfy these behaviors so
-// application/test code can treat every adapter as interchangeable.
+// services/test code can treat every adapter as interchangeable.
 //
 // Usage: `runStoryWorldStoreContract(() => createMockStoryWorldStore())`
 // inside a test file.
@@ -72,6 +72,7 @@ export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void
       scenes: [],
       plotThreads: [],
       openQuestions: [],
+      resolvedOpenQuestionIds: [],
       contradictions: [],
       supersedeFactIds: [],
       ...overrides,

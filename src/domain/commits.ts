@@ -38,6 +38,9 @@ export interface Commit {
   scenes: Scene[];
   plotThreads: PlotThread[];
   openQuestions: OpenQuestion[];
+  // Existing unresolved open questions that this commit resolves (T5.1
+  // stage_resolve_open_question). applyCommit marks them isResolved=true.
+  resolvedOpenQuestionIds: string[];
   contradictions: CommitContradiction[];
   supersedeFactIds: string[];
 }
@@ -55,6 +58,7 @@ export interface CommitResult {
   scenesAdded: number;
   plotThreadsUpdated: number;
   openQuestionsAdded: number;
+  openQuestionsResolved: number;
   contradictionsFound: number;
   factsSuperseded: number;
 }
@@ -78,6 +82,7 @@ export function emptyCommit(storyId: string, revision: number): Commit {
     scenes: [],
     plotThreads: [],
     openQuestions: [],
+    resolvedOpenQuestionIds: [],
     contradictions: [],
     supersedeFactIds: [],
   };
@@ -158,6 +163,21 @@ export function applyCommit(world: StoryWorld, commit: Commit): ApplyCommitResul
     markSuperseded(factId, randomUUID());
   }
 
+  const resolvedOpenQuestionIds = new Set(commit.resolvedOpenQuestionIds);
+  for (const questionId of resolvedOpenQuestionIds) {
+    const question = world.openQuestions.find((candidate) => candidate.id === questionId);
+    if (!question) {
+      fail(`cannot resolve unknown open question id "${questionId}"`);
+    }
+    if (question.isResolved) {
+      fail(`open question "${questionId}" is already resolved`);
+    }
+  }
+
+  const openQuestions = world.openQuestions.map((question) =>
+    resolvedOpenQuestionIds.has(question.id) ? { ...question, isResolved: true } : question,
+  );
+
   for (const contradiction of commit.contradictions) {
     if (contradiction.action !== SupersedeAction.Supersede) continue;
     if (contradiction.existingFactId === null) continue;
@@ -205,6 +225,7 @@ export function applyCommit(world: StoryWorld, commit: Commit): ApplyCommitResul
     scenesAdded: commit.scenes.length,
     plotThreadsUpdated: commit.plotThreads.length,
     openQuestionsAdded: commit.openQuestions.length,
+    openQuestionsResolved: resolvedOpenQuestionIds.size,
     contradictionsFound: commit.contradictions.length,
     factsSuperseded: supersededFactIds.size,
   };
@@ -221,7 +242,7 @@ export function applyCommit(world: StoryWorld, commit: Commit): ApplyCommitResul
       knowledge: [...world.knowledge, ...commit.knowledge],
       scenes: [...world.scenes, ...commit.scenes],
       plotThreads: [...world.plotThreads, ...commit.plotThreads],
-      openQuestions: [...world.openQuestions, ...commit.openQuestions],
+      openQuestions: [...openQuestions, ...commit.openQuestions],
     },
     result,
   };
