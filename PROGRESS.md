@@ -370,3 +370,81 @@ tests/container-memory.test.ts      # LLM_PROVIDER=openai (fake key, no live cal
 ### Next up
 
 Phase 10 — AssemblyAI STT adapter (T10.1–T10.2): `submitTranscription` uploads audio + webhook auth echo, `getTranscript` by `transcript_id`; then Phase 11 SQS job queue (T11.1).
+
+---
+
+## Phase 10: AssemblyAI STT Adapter — COMPLETE (T10.1–T10.2)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — 19 files, 139 tests, all pass (added `tests/adapters/assemblyai.test.ts`, 6 tests; `tests/container-memory.test.ts` +2: STT + JOB_QUEUE wiring).
+
+### Files created/changed
+
+```
+src/adapters/assemblyai/stt.ts   # AssemblyAiStt over the v2 REST API via native fetch (no SDK dep):
+                                 #   POST /v2/upload (audio, Authorization: STT_API_KEY) → audio_url,
+                                 #   POST /v2/transcript (audio_url + webhook_url + webhook_auth_name/value echo),
+                                 #   GET /v2/transcript/{id} for getJobStatus (queued/processing/completed/error→failed)
+                                 #   + getTranscript (text, word segments, audio_duration→seconds); AssemblyAiError
+                                 #   carries provider HTTP status; baseUrl + fetch injection seams for offline tests
+src/adapters/assemblyai/index.ts # barrel: assemblyaiStt + AssemblyAiStt + AssemblyAiError
+src/adapters/index.ts            # re-exports ./assemblyai
+src/container/index.ts           # STT_PROVIDER=assemblyai (+STT_API_KEY) → real AssemblyAiStt; else lazy
+                                 #   NotImplementedError pointing at STT_PROVIDER=assemblyai
+tests/adapters/assemblyai.test.ts # fake AssemblyAI API over the fetch seam (6 tests)
+tests/container-memory.test.ts    # T10 wiring test
+```
+
+### Decisions / deviations
+
+- **Native fetch instead of the `assemblyai` npm SDK** — same REST endpoints, zero new dependencies, and `baseUrl`/`fetch` seams give deterministic offline tests (the fake API records every request for header/payload assertions) and a path to a self-hosted relay.
+- **Webhook auth echo ships at submit time** (`webhook_auth_header_name`/`webhook_auth_header_value` from `TranscribeRequest.webhookAuth`, echoing `WEBHOOK_SECRET`) — the callback (T12.x webhook route) trusts only that echoed header.
+- **`getTranscript` word-level segments map to `TranscriptSegment`** (start/end ms, confidence) and `audio_duration` (ms) → `durationSeconds` — both optionally present.
+
+### Next up
+
+Phase 11 — AWS SQS job queue (T11.1–T11.3): consumer with `maxConcurrency` bound + DLQ + dev in-memory fallback, worker entry, barrels.
+
+---
+
+## Phase 11: AWS SQS Job Queue Adapter — COMPLETE (T11.1–T11.3)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — 19 files, 139 tests, all pass (added `tests/adapters/sqs.test.ts`, 8 tests; `tests/container-memory.test.ts` +1 T11 wiring).
+
+### Files created/changed
+
+```
+src/adapters/sqs/job-queue.ts   # SqsJobQueue (T11.1): enqueue → SendMessage({ jobName, data } body + jobName
+                                #   attribute); consumer start() → long-poll ReceiveMessage → dispatch under a
+                                #   maxConcurrency semaphore; delete processed; failed → DLQ (dlqUrl) or delete;
+                                #   getStatus keyed by message ids; resilience "strict"|"local-fallback" (dev
+                                #   degrades to the in-process queue with a logged warning + keeps registered
+                                #   handlers, no busy-spin: short-poll yields 25ms); stop() drains handers
+src/adapters/sqs/index.ts       # barrel: sqsQueue factory + SqsJobQueue
+src/adapters/index.ts           # re-exports ./sqs
+workers/index.ts                # T11.2: boots buildContainer(), registers extraction → TRANSCRIPT_PROCESSOR,
+                                #   queue.start() for SqsJobQueue, graceful SIGTERM/SIGINT (stop + exit)
+package.json                    # "worker": "tsx workers/index.ts"
+src/container/index.ts          # SQS_QUEUE_URL set → new SqsJobQueue(client: SQSClient({region}), maxConcurrency 10,
+                                #   resilience local-fallback, warn logger); else lazy NotImplementedError → SQS
+tests/adapters/sqs.test.ts      # fake SQS client over the injected seam (8 tests)
+tests/container-memory.test.ts  # T11 wiring test
+```
+
+### Decisions / deviations
+
+- **SQS client is injectable** — tests pass a fake client whose `send` routes on `command.constructor.name`, so the adapter is verified without LocalStack; a real LocalStack e2e is an ops-level verification (documented in ACTIONS T11.1).
+- **Local-fallback lives in src, not tests/mocks** — the resilience path is a real branch of the production adapter (`resilience: "local-fallback"`), used by `buildContainer`, so dev survives an unreachable queue without importing mocks into src.
+- **`start()`/`stop()` are concrete `SqsJobQueue` methods beyond the `JobQueue` port** — API/webhook processes enqueue only; the polling consumer is started explicitly by `workers/index.ts` (and drained on shutdown).
+- **Job payload is `{ jobName, data }` with jobName duplicated as a message attribute** — routing survives bodies whose JSON parse fails.
+
+### Next up
+
+Phase 12 — API routes (T12.1–T12.10): `POST /api/dictations` (multipart upload → `saveDictation` + `submitTranscription` + `providerJobId`), AssemblyAI webhook route (verify echoed `WEBHOOK_SECRET`, resolve `transcript_id` → dictation, queue extraction), story/entity query+edit routes, dictation status endpoint.

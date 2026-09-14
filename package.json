@@ -11,11 +11,13 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx drizzle/migrate.mts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "worker": "tsx workers/index.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.53",
     "@ai-sdk/openai": "^4.0.66",
+    "@aws-sdk/client-sqs": "^3.1131.0",
     "@evyweb/ioctopus": "^1.4.1",
     "@trpc/server": "^11.18.0",
     "ai": "^7.0.99",

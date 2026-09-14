@@ -1,11 +1,18 @@
+import { SQSClient } from "@aws-sdk/client-sqs";
 import { createContainer, createModule } from "@evyweb/ioctopus";
 import type { TypedContainer } from "@evyweb/ioctopus";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type { AppConfig } from "@/config";
 import { loadConfig } from "@/config";
-import { SystemClock, createLanguageModel, openaiLlm } from "@/adapters";
+import {
+  SystemClock,
+  assemblyaiStt,
+  createLanguageModel,
+  openaiLlm,
+} from "@/adapters";
 import { PostgresStoryWorldStore, PostgresTranscriptStore } from "@/adapters/postgres";
+import { SqsJobQueue } from "@/adapters/sqs";
 import { TranscriptProcessor } from "@/services/llm-agent/transcript-processor";
 import * as databaseSchema from "../../drizzle/schema";
 import type { AppRegistry } from "./registry";
@@ -64,12 +71,17 @@ export function buildContainer(config: AppConfig = loadConfig()): TypedContainer
     );
 
   // --- Adapters not yet shipped (lazy, descriptive errors on resolve) -----
-  container.bind("STT").toFactory(() => {
-    throw new NotImplementedError(
-      "STT requires the AssemblyAI adapter (Phase 10, T10.1) — not implemented yet. " +
-        "Mock STT lives in tests/mocks only.",
-    );
-  });
+  if (config.STT_PROVIDER === "assemblyai" && config.STT_API_KEY) {
+    container.bind("STT").toValue(assemblyaiStt({ apiKey: config.STT_API_KEY }));
+  } else {
+    container.bind("STT").toFactory(() => {
+      throw new NotImplementedError(
+        `STT_PROVIDER=${JSON.stringify(config.STT_PROVIDER)} is not wired in the production container. ` +
+          "Set STT_PROVIDER=assemblyai (with STT_API_KEY) to use the AssemblyAI adapter (Phase 10, T10.1). " +
+          "Mock STT lives in tests/mocks only.",
+      );
+    });
+  }
   if (config.LLM_PROVIDER === "openai") {
     container
       .bind("LLM")
@@ -91,11 +103,25 @@ export function buildContainer(config: AppConfig = loadConfig()): TypedContainer
       );
     });
   }
-  container.bind("JOB_QUEUE").toFactory(() => {
-    throw new NotImplementedError(
-      "JOB_QUEUE requires the SQS adapter (Phase 11, T11.x) — not implemented yet.",
-    );
-  });
+  if (config.SQS_QUEUE_URL) {
+    container
+      .bind("JOB_QUEUE")
+      .toValue(
+        new SqsJobQueue({
+          queueUrl: config.SQS_QUEUE_URL,
+          client: new SQSClient({ region: config.AWS_REGION }),
+          maxConcurrency: 10,
+          resilience: "local-fallback",
+          logger: (line) => console.warn(line),
+        }),
+      );
+  } else {
+    container.bind("JOB_QUEUE").toFactory(() => {
+      throw new NotImplementedError(
+        "JOB_QUEUE requires the SQS adapter (Phase 11, T11.1) — set SQS_QUEUE_URL (and AWS_REGION) to enable it.",
+      );
+    });
+  }
 
   return container;
 }

@@ -379,17 +379,18 @@ Design: the extraction path no longer builds context (the agent fetches via tool
 
 ## Phase 10: AssemblyAI STT Adapter
 
-### T10.1 — AssemblyAI STT adapter
+### T10.1 — ✅ Done AssemblyAI STT adapter
 - **Scope:** Implement `SpeechToText` backed by AssemblyAI. `submitTranscription` uploads audio and submits a transcript job with `webhookUrl`; it returns the **`transcript_id`** — the correlation key persisted as `providerJobId` on the dictation row. Uses AssemblyAI webhook auth (`webhook_auth_header_name` + `webhook_auth_header_value` echoing `WEBHOOK_SECRET`) so callbacks can be trusted. `getTranscript` fetches by transcript id. Handle: queued → processing → done/error states.
 - **Files:** `src/adapters/assemblyai/stt.ts`
 - **Deps:** T2.2
-- **Acceptance:** Passes adapter contract test (mock AssemblyAI API responses).
+- **Acceptance:** Adapter tests (`tests/adapters/assemblyai.test.ts`, 6 tests) drive a fake AssemblyAI REST API via the injected `fetch` seam — covers upload+submit with webhook echo, webhook-field omission, queued→processing→completed, error→failed, word segments + duration, 4xx upload rejection (`AssemblyAiError`).
+- **Deviation:** implemented against the v2 REST API with native `fetch` (no `assemblyai` SDK dep); the SDK is a thin wrapper over the same endpoints, and `baseUrl`/`fetch` seams allow offline testing and a self-hosted relay.
 
-### T10.2 — AssemblyAI adapter barrel export
+### T10.2 — ✅ Done AssemblyAI adapter barrel export
 - **Scope:** Re-export from `src/adapters/assemblyai/index.ts`.
-- **Files:** `src/adapters/assemblyai/index.ts`
+- **Files:** `src/adapters/assemblyai/index.ts` (+ re-exported from `src/adapters/index.ts`)
 - **Deps:** T10.1
-- **Acceptance:** `import { assemblyaiStt } from '@/adapters/assemblyai'` works.
+- **Acceptance:** `import { assemblyaiStt } from '@/adapters/assemblyai'` works. `buildContainer` binds `STT` to `assemblyaiStt({ apiKey: STT_API_KEY })` when `STT_PROVIDER=assemblyai`; other providers resolve a lazy `NotImplementedError` pointing at `STT_PROVIDER=assemblyai`.
 
 ---
 
@@ -397,21 +398,21 @@ Design: the extraction path no longer builds context (the agent fetches via tool
 
 SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeout retries built in). Rate limiting to AssemblyAI is done on the **consumer side** with a bounded `maxConcurrency` (SQS has no server-side rate limiter — AssemblyAI is account-rate-limited).
 
-### T11.1 — SQS JobQueue adapter
-- **Scope:** Implement `JobQueue` backed by AWS SQS. `enqueue` sends a message to the queue configured by `SQS_QUEUE_URL`. `onJobCompleted` registers a consumer (long-polling `ReceiveMessage` loop, or SQS triggers) running with a `maxConcurrency` bound so in-flight extraction + STT submissions stay under AssemblyAI's account rate limit. `getStatus` maps SQS message state / DLQ. Handle: connection errors gracefully (log + fall back to in-memory in dev). Dead-letter queue enabled.
+### T11.1 — ✅ Done SQS JobQueue adapter
+- **Scope:** Implement `JobQueue` backed by AWS SQS with `@aws-sdk/client-sqs`. `enqueue` sends a `{ jobName, data }` message (jobName also a message attribute) to the queue configured by `SQS_QUEUE_URL`. The consumer long-polls `ReceiveMessage` and dispatches to the registered handler under a `maxConcurrency` bound (the AssemblyAI account rate limit); processed messages are deleted, failed jobs go to the DLQ when configured. `getStatus` tracks job state against the returned message ids. Connection errors degrade to an in-process queue in `local-fallback` mode (dev) with a logged warning, or throw in `strict` mode. Polling starts explicitly via `start()` (worker-only), with `stop()` graceful shutdown.
 - **Files:** `src/adapters/sqs/job-queue.ts`
 - **Deps:** T2.5
-- **Acceptance:** Passes adapter contract test. `enqueue` + `onJobCompleted` round-trip works against LocalStack; adheres to `maxConcurrency` under a burst of jobs.
+- **Acceptance:** Adapter tests (`tests/adapters/sqs.test.ts`, 8 tests) run against a fake SQS client (injected seam) covering: enqueue payload/attribute, enqueue+consume round-trip + delete, failure→onJobFailed + delete, DLQ move, `maxConcurrency` under a 5-job burst (peak ≤ bound), unknown-job abandonment, local-fallback resilience, strict-mode rethrow. LocalStack e2e remains a manual/ops verification.
 
-### T11.2 — Worker entry point
+### T11.2 — ✅ Done Worker entry point
 - **Scope:** Create `workers/index.ts` that boots an SQS consumer for the `extraction` job type. Worker uses `buildContainer(process.env)` and calls `container.get('TRANSCRIPT_PROCESSOR').process(job)`. Handles graceful shutdown (SIGTERM).
-- **Files:** `workers/index.ts`
+- **Files:** `workers/index.ts` (+ `worker` npm script → `tsx workers/index.ts`)
 - **Deps:** T11.1, T5.4, T4.3
-- **Acceptance:** `npx tsx workers/index.ts` starts and processes a test job.
+- **Acceptance:** `npm run worker` (with `DATABASE_URL` + `SQS_QUEUE_URL` + real keys in env) starts the extraction consumer; SIGTERM/SIGINT drains in-flight handlers before exit.
 
-### T11.3 — SQS adapter barrel export
+### T11.3 — ✅ Done SQS adapter barrel export
 - **Scope:** Re-export from `src/adapters/sqs/index.ts`.
-- **Files:** `src/adapters/sqs/index.ts`
+- **Files:** `src/adapters/sqs/index.ts` (+ re-exported from `src/adapters/index.ts`; `buildContainer` binds `JOB_QUEUE` to `SqsJobQueue` when `SQS_QUEUE_URL` is set, else lazy `NotImplementedError`)
 - **Deps:** T11.1
 - **Acceptance:** `import { sqsQueue } from '@/adapters/sqs'` works.
 

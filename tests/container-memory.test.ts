@@ -3,6 +3,7 @@ import { buildContainer } from "@/container";
 import { loadConfig } from "@/config";
 import type {
   AppRegistry,
+  JobQueue,
   LlmClient,
   SpeechToText,
   StoryWorldStore,
@@ -79,6 +80,37 @@ describe("Phase 4 composition root", () => {
     const llm: LlmClient = container.get("LLM");
     expect(typeof llm.complete).toBe("function");
     expect(typeof llm.extractStructured).toBe("function");
+  });
+
+  it("wires the AssemblyAI STT adapter when STT_PROVIDER=assemblyai (T10)", () => {
+    const container = buildContainer(
+      loadConfig({
+        DATABASE_URL: "postgres://localhost:5432/novelos_test",
+        LLM_PROVIDER: "mock",
+        STT_PROVIDER: "assemblyai",
+        STT_API_KEY: "test-key",
+      }),
+    );
+    const stt: SpeechToText = container.get("STT");
+    expect(typeof stt.submitTranscription).toBe("function");
+    expect(typeof stt.getJobStatus).toBe("function");
+    expect(typeof stt.getTranscript).toBe("function");
+  });
+
+  it("wires the SQS JobQueue adapter when SQS_QUEUE_URL is set (T11)", () => {
+    const container = buildContainer(
+      loadConfig({
+        DATABASE_URL: "postgres://localhost:5432/novelos_test",
+        LLM_PROVIDER: "mock",
+        SQS_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/123/novelos-extraction",
+        AWS_REGION: "us-east-1",
+      }),
+    );
+    const queue: JobQueue = container.get("JOB_QUEUE");
+    expect(typeof queue.enqueue).toBe("function");
+    expect(typeof queue.onJobCompleted).toBe("function");
+    expect(typeof queue.onJobFailed).toBe("function");
+    expect(typeof queue.getStatus).toBe("function");
   });
 
   it("supports typed registry resolution for every port token", () => {
