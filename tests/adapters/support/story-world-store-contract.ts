@@ -11,8 +11,11 @@ import type { StoryWorld } from "@/domain/story-world";
 // services/test code can treat every adapter as interchangeable.
 //
 // Usage: `runStoryWorldStoreContract(() => createMockStoryWorldStore())`
-// inside a test file.
-export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void {
+// (or an async factory for adapters that need bootstrap, e.g. Postgres in
+// T8.2) inside a test file.
+export function runStoryWorldStoreContract(
+  factory: () => StoryWorldStore | Promise<StoryWorldStore>,
+): void {
   const storyId = randomUUID();
   const shipTypeId = randomUUID();
   const dates = {
@@ -100,7 +103,7 @@ export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void
 
   describe("contract: StoryWorldStore", () => {
     it("returns null for an unknown story", async () => {
-      const store = factory();
+      const store = await factory();
       expect(await store.getWorld(storyId)).toBeNull();
       expect(await store.getEntity(storyId, randomUUID())).toBeNull();
       expect(await store.byRevision(storyId, 0)).toBeNull();
@@ -108,7 +111,7 @@ export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void
     });
 
     it("commits a type + entity registration and reads it back", async () => {
-      const store = factory();
+      const store = await factory();
       const result = await store.commit(
         commit({ newEntityTypes: [shipType], entities: [relentless] }),
       );
@@ -130,7 +133,7 @@ export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void
     });
 
     it("enforces the appliedFromRevision guard and commits are atomic", async () => {
-      const store = factory();
+      const store = await factory();
 
       await expect(
         store.commit(commit({ entities: [{ ...relentless, entityTypeId: randomUUID() }] })),
@@ -147,7 +150,7 @@ export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void
     });
 
     it("appends events and filters queryEvents by setting/participant/date", async () => {
-      const store = factory();
+      const store = await factory();
       await store.commit(commit({ newEntityTypes: [shipType], entities: [relentless, secondShip] }));
 
       const e1 = event(randomUUID(), secondShip.id, [relentless.id], dates.t1);
@@ -166,7 +169,7 @@ export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void
     });
 
     it("reconstructs immutable per-revision snapshots via byRevision", async () => {
-      const store = factory();
+      const store = await factory();
       await store.commit(commit({ newEntityTypes: [shipType], entities: [relentless] }));
       await store.commit(
         commit({ appliedFromRevision: 1, entities: [secondShip] }),
@@ -181,7 +184,7 @@ export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void
     });
 
     it("supersedes facts and rejects unknown supersede targets", async () => {
-      const store = factory();
+      const store = await factory();
       const factId = randomUUID();
       await store.commit(
         commit({
@@ -216,7 +219,7 @@ export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void
     });
 
     it("supports the entity-type registry without touching the world revision", async () => {
-      const store = factory();
+      const store = await factory();
       const id = await store.upsertEntityType(storyId, {
         storyId,
         name: "planet",
@@ -251,7 +254,7 @@ export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void
     });
 
     it("attaches media and inserts knowledge", async () => {
-      const store = factory();
+      const store = await factory();
       await store.commit(commit({ newEntityTypes: [shipType], entities: [relentless] }));
 
       const mediaId = await store.attachMedia(relentless.id, {
@@ -279,7 +282,7 @@ export function runStoryWorldStoreContract(factory: () => StoryWorldStore): void
     });
 
     it("keeps snapshots untouched by later auxiliary writes", async () => {
-      const store = factory();
+      const store = await factory();
       await store.commit(commit({ newEntityTypes: [shipType], entities: [relentless] }));
       const world: StoryWorld | null = await store.byRevision(storyId, 1);
       await store.attachMedia(relentless.id, { url: "s3://bucket/pic.jpg", role: "gallery", caption: null });

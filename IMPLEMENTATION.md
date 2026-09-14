@@ -977,6 +977,8 @@ export interface LlmClient {
 }
 ```
 
+**Implementation note (T9.1, shipped):** `OpenAiLlm` (`src/adapters/openai/llm-client.ts`) implements this port over the AI SDK: `complete` → `generateText`; `extractStructured` → `zodSchema(request.schema)` + `generateObject` (JSON mode) with exactly one re-prompt on a parse/schema failure (a second failure rethrows). Tier routing maps `cheap`/`standard`/`best` to the per-tier model from config (`LLM_CHEAP_MODEL`/`LLM_STANDARD_MODEL`/`LLM_BEST_MODEL`, defaults `gpt-5-nano`/`gpt-5-mini`/`gpt-5-pro`); AI SDK `LanguageModelUsage` fields (`number | undefined`) coalesce to `0`. `buildContainer` binds `LLM` to `openaiLlm({ apiKey, models })` when `LLM_PROVIDER=openai` (T9.3). The tool-calling extraction agent loop uses a separate AI SDK `LanguageModel` via `createLanguageModel` (§8.1), not this port.
+
 **Revision note (AI SDK migration, T2.1/T5.4):** the port originally also defined native-function-calling types (`ChatRole`, `ChatMessage`, `ToolCall`, `ToolDefinition`, `ChatRequest`, `ChatResult`) and an `LlmClient.chat` method (below). All of that was **removed** from the shipped port (`src/container/llm.ts`) — the extraction agent loop is driven by the Vercel AI SDK (`generateText` + `tools` + `stopWhen`, see §8.1) which owns message/tool-call assembly. Tool schemas are zod (`STORY_TOOL_CATALOG` in `src/services/llm-agent/tools/definitions.ts`) bridged to the SDK via `zodSchema()` in `buildStoryTools` (`src/services/llm-agent/tools/sdk.ts`). The removed hand-rolled types (historical design):
 
 ```typescript

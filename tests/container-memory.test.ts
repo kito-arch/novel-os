@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NotImplementedError, buildContainer } from "@/container";
+import { buildContainer } from "@/container";
 import { loadConfig } from "@/config";
 import type {
   AppRegistry,
@@ -44,22 +44,41 @@ describe("Phase 4 composition root", () => {
     expect(a.get("LLM")).not.toBe(b.get("LLM"));
   });
 
-  it("buildContainer throws a descriptive error for every unimplemented adapter", () => {
-    // Real providers → phase-referencing error.
+  it("buildContainer requires DATABASE_URL and errors descriptively for unshipped adapters", () => {
+    // No DATABASE_URL → no production store exists; clear error at build time.
     expect(() =>
-      buildContainer(loadConfig({ STT_PROVIDER: "assemblyai", STT_API_KEY: "k", LLM_PROVIDER: "mock" })),
-    ).toThrow(/AssemblyAI/);
-    expect(() =>
-      buildContainer(loadConfig({ LLM_PROVIDER: "openai", LLM_API_KEY: "k" })),
-    ).toThrow(NotImplementedError);
+      buildContainer(loadConfig({ LLM_PROVIDER: "mock" })),
+    ).toThrow(/DATABASE_URL/);
 
-    // Mock providers → no src mock adapter belongs in production; mocks live in tests.
-    expect(() => buildContainer(loadConfig({ LLM_PROVIDER: "mock" }))).toThrow(
-      /tests\/mocks/,
+    // With DATABASE_URL the container builds with real Postgres adapters
+    // (client construction does not connect, so no live DB is required here).
+    const container = buildContainer(
+      loadConfig({
+        DATABASE_URL: "postgres://localhost:5432/novelos_test",
+        LLM_PROVIDER: "mock",
+      }),
     );
-    expect(() => buildContainer(loadConfig({ DATABASE_URL: "postgres://x", LLM_PROVIDER: "mock" }))).toThrow(
-      NotImplementedError,
+    expect(container.get("STORY_WORLD_STORE")).toBeDefined();
+    expect(container.get("TRANSCRIPT_STORE")).toBeDefined();
+
+    // Adapters that have not shipped resolve to phase-referencing errors.
+    expect(() => container.get("STT")).toThrow(/AssemblyAI/);
+    expect(() => container.get("LLM")).toThrow(/Phase 9/);
+    expect(() => container.get("JOB_QUEUE")).toThrow(/SQS/);
+  });
+
+  it("wires the OpenAI LlmClient adapter when LLM_PROVIDER=openai (T9)", () => {
+    const container = buildContainer(
+      loadConfig({
+        DATABASE_URL: "postgres://localhost:5432/novelos_test",
+        LLM_PROVIDER: "openai",
+        LLM_API_KEY: "test-key",
+        LLM_BEST_MODEL: "gpt-5-pro-test",
+      }),
     );
+    const llm: LlmClient = container.get("LLM");
+    expect(typeof llm.complete).toBe("function");
+    expect(typeof llm.extractStructured).toBe("function");
   });
 
   it("supports typed registry resolution for every port token", () => {

@@ -282,3 +282,91 @@ tests/adapters/memory.test.ts, tests/adapters/support/story-world-store-contract
 ### Next up
 
 Phase 6 — STT Service (AssemblyAI adapter + `onTranscribed` webhook flow, STT→extract orchestration).
+
+---
+
+## Phase 8: Postgres / Drizzle — Schema + Migrations + Adapters — COMPLETE (T8.1–T8.5)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — 17 files, 123 tests, all pass (incl. `tests/adapters/postgres.test.ts`, 12 tests against live `novelos_test`).
+- `DATABASE_URL=postgres://localhost:5432/novelos_test npm run db:migrate` applies both migrations idempotently; `psql` confirms 14 tables + 2 rows in `drizzle.__drizzle_migrations`.
+
+### Files created/changed
+
+```
+drizzle/schema.ts              # 14 tables (stories, entity_types, entities, attributes, facts, relationships,
+                               #    knowledge, plot_threads, open_questions, secrets, scenes, events, media,
+                               #    activity) + 5 pgEnums (base_kind, attribute_kind, fact_kind, confidence,
+                               #    knowledge_status); every row carries revision for append-only byRevision reads
+drizzle.config.ts              # drizzle-kit config (schema + drizzle/migrations + novels_test)
+drizzle/migrate.mts            # db:migrate runner — .mts (tsx CJS rejects top-level await in .ts)
+drizzle/migrations/0000_initial.sql          # drizzle-kit generate --name=initial
+drizzle/migrations/0001_scenes-chapter-number.sql # scenes.chapter_number added post-hoc
+package.json                   # db:generate / db:migrate / db:studio scripts; tsx ^4.23.13 devDependency
+src/adapters/postgres/story-world-store.ts  # PostgresStoryWorldStore — revision-capped byRevision reads,
+                                            #   applyCommit single-transaction gate + optimistic revision bump,
+                                            #   computeSupersededMap mirrors domain supersede
+src/adapters/postgres/transcript-store.ts   # PostgresTranscriptStore — upserts story shell (Untitled story/system)
+                                            #   before inserting dictations (stories FK)
+src/adapters/postgres/index.ts              # barrel
+src/container/index.ts                      # buildContainer binds Postgres adapters via drizzle(postgres(url), { schema });
+                                            #   DATABASE_URL required (throws) — real adapters are real-only
+tests/adapters/postgres.test.ts             # truncates 14 tables per factory; runs the StoryWorldStore contract
+                                            #   (9 tests) + TranscriptStore round-trip + 2 T8.5 container tests
+tests/adapters/support/story-world-store-contract.ts # factory signature made async (await factory()) — reused by Postgres
+tests/container-memory.test.ts              # buildContainer with fake DATABASE_URL (no DB connection needed)
+```
+
+### Decisions / deviations
+
+- **Append-only + revision columns replace a separate event-store log** — every table carries `revision`; `byRevision(N)` filters `revision <= N`, so snapshots reconstruct from the immutable table state without an event log.
+- **Provenance dictation ids are not FK-constrained** — the STT webhook can arrive before `saveDictation`, and contract tests use arbitrary dictation ids; correctness is enforced at the service layer, not the schema.
+- **`drizzle(client, { schema: databaseSchema })` is mandatory** for typed `PostgresJsDatabase<typeof schema>` — plain `drizzle(client)` yields `Record<string, never>` and fails typecheck.
+- **buildContainer requires `DATABASE_URL`** at build time; unshipped adapters (`STT`, `JOB_QUEUE`, and any non-`openai` `LLM` provider) stay **lazy** `toFactory` bindings that throw a descriptive `NotImplementedError` at resolve time, not binding time.
+- **`drizzle/migrate.mts`** uses the `.mts` extension because `tsx` (CJS) rejects top-level `await` in a `.ts` file; `.mts` works.
+
+### Next up
+
+Phase 9 — OpenAI LLM adapter (see below), then Phase 10 AssemblyAI STT (T10.1–T10.2), Phase 11 SQS (T11.1).
+
+---
+
+## Phase 9: OpenAI LLM Adapter — COMPLETE (T9.1–T9.3)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — 17 files, 123 tests, all pass (added `tests/adapters/openai.test.ts`, 5 tests; `tests/container-memory.test.ts` +1 T9.3 wiring test).
+
+### Files created/changed
+
+```
+src/adapters/openai/llm-client.ts   # OpenAiLlm — complete → generateText; extractStructured → zodSchema +
+                                    #   generateObject JSON mode + once-parse-failure re-prompt; tier routing
+                                    #   cheap/standard/best → gpt-5-nano/gpt-5-mini/gpt-5-pro (per-tier override via
+                                    #   LLM_*_MODEL config); AI SDK usage (number | undefined) coalesced to 0;
+                                    #   modelForTier test seam injects scripted models
+src/adapters/openai/index.ts        # barrel: OpenAiLlm + openaiLlm factory
+src/adapters/index.ts               # re-exports src/adapters/openai
+src/container/index.ts              # T9.3: LLM_PROVIDER=openai → openaiLlm({ apiKey, models }); others → lazy
+                                    #   NotImplementedError pointing at LLM_PROVIDER=openai
+tests/adapters/openai.test.ts       # complete text+usage, extractStructured parse+validate, exactly-one retry,
+                                    #   retry re-throws when repair fails, full domain schema (storyChangeSchema)
+                                    #   with defaults, tier selection via modelForTier
+tests/container-memory.test.ts      # LLM_PROVIDER=openai (fake key, no live call) resolves complete/extractStructured
+```
+
+### Decisions / deviations
+
+- **`createLanguageModel` (agent-loop model) and `OpenAiLlm` (LlmClient) both ship in T9.1** — the tool-calling agent loop runs on the AI SDK `LanguageModel` (`generateText` + tools), while the port-facing `complete`/`extractStructured` adapter is the OpenAI `LlmClient`. The `LLM` container token binds the latter.
+- **Per-tier model names come from config** (`LLM_CHEAP/STANDARD/BEST_MODEL`, defaults `gpt-5-nano`/`gpt-5-mini`/`gpt-5-pro`) instead of hard-coded names, so DNS-style model swaps don't require a code change.
+- **Retries only on parse/schema failure, exactly once** — the model re-reads its previous output with a strictness hint appended to the prompt and re-renders JSON; a second failure rethrows.
+- **`modelForTier` is the test seam** — adapter tests drive `MockLanguageModelV4` scripted models (tests/mocks/sdk-model.ts) without a live OpenAI connection; `openaiLlm` only constructs `createOpenAI` when no seam is injected.
+
+### Next up
+
+Phase 10 — AssemblyAI STT adapter (T10.1–T10.2): `submitTranscription` uploads audio + webhook auth echo, `getTranscript` by `transcript_id`; then Phase 11 SQS job queue (T11.1).

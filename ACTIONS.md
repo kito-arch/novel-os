@@ -321,57 +321,59 @@ Design: the extraction path no longer builds context (the agent fetches via tool
 
 ## Phase 8: Database (Drizzle + Postgres)
 
-### T8.1 — Drizzle schema
+### T8.1 — ✅ Done Drizzle schema
 - **Scope:** Define all tables from IMPLEMENTATION.md §6 as Drizzle `pgTable` definitions. Include proper types: `jsonb` for arrays/objects, `uuid` primary keys, `text` for confidence enums, `serial` for revision bumps.
 - **Files:** `drizzle/schema.ts`, `drizzle/migrations/` (initial)
 - **Deps:** T0.2
-- **Acceptance:** `drizzle-kit generate` produces a migration. Migration applies cleanly to a test Postgres instance.
+- **Acceptance:** `drizzle-kit generate` produced `0000_initial.sql`; migration applies cleanly to `novelos_test`. 14 tables + 5 pgEnums; every row carries `revision` for append-only `byRevision` (see note below).
 
-### T8.2 — Postgres StoryWorldStore adapter
+### T8.2 — ✅ Done Postgres StoryWorldStore adapter
 - **Scope:** Implement `StoryWorldStore` backed by Drizzle + Postgres. `commit` is a single transaction: insert events, upsert entities, insert facts, insert knowledge, bump story revision. `getWorld` JOINs all tables for a story. `queryEvents` filters by participants, location, time range. `byRevision` reconstructs world at a given revision (append-only with supersede).
 - **Files:** `src/adapters/postgres/story-world-store.ts`
 - **Deps:** T2.3, T8.1
-- **Acceptance:** Passes adapter contract test from T4.5 against a real Postgres database.
+- **Acceptance:** Passes adapter contract test from T4.5 against a real Postgres database (9 contract tests green in `tests/adapters/postgres.test.ts`).
 
-### T8.3 — Postgres TranscriptStore adapter
-- **Scope:** Implement `TranscriptStore` backed by Drizzle: insert/find dictations (`listDictations`, `findDictationByProviderJobId`).
+### T8.3 — ✅ Done Postgres TranscriptStore adapter
+- **Scope:** Implement `TranscriptStore` backed by Drizzle: insert/find dictations (`listDictations`, `findDictationByProviderJobId`). Note: inserts upsert a story shell first — `dictations.story_id` FKs `stories`, so the story row must exist before saving a dictation.
 - **Files:** `src/adapters/postgres/transcript-store.ts`
 - **Deps:** T2.4, T8.1
-- **Acceptance:** Passes adapter contract test.
+- **Acceptance:** Passes adapter contract test (round-trip green in `tests/adapters/postgres.test.ts`).
 
-### T8.4 — Postgres adapter barrel + migration runner
-- **Scope:** Re-export from `src/adapters/postgres/index.ts`. Create `drizzle/migrate.ts` script for CI/production.
-- **Files:** `src/adapters/postgres/index.ts`, `drizzle/migrate.ts`
+### T8.4 — ✅ Done Postgres adapter barrel + migration runner
+- **Scope:** Re-export from `src/adapters/postgres/index.ts`. Create `drizzle/migrate.mts` script for CI/production (`tsx` under CJS rejects top-level `await` in `.ts`, hence `.mts`).
+- **Files:** `src/adapters/postgres/index.ts`, `drizzle/migrate.mts`
 - **Deps:** T8.2, T8.3
-- **Acceptance:** `npx tsx drizzle/migrate.ts` runs without error against test DB.
+- **Acceptance:** `npm run db:migrate` runs without error against test DB (idempotent; `drizzle.__drizzle_migrations` = 2 rows).
 
-### T8.5 — Production buildContainer
+### T8.5 — ✅ Done Production buildContainer
 - **Scope:** Update `buildContainer` in `src/container/index.ts` to instantiate real Postgres adapters when `DATABASE_URL` is set. Real LLM adapter (T9.x) when `LLM_API_KEY` is set. SQS queue adapter (T11.x) when `SQS_QUEUE_URL` is set. Each missing env skips that adapter with a clear error.
 - **Files:** `src/container/index.ts`
 - **Deps:** T8.2–T8.4, T4.3
-- **Acceptance:** `buildContainer(loadConfig({ DATABASE_URL: '...' }))` returns a container with real `StoryWorldStore`.
+- **Acceptance:** `buildContainer(loadConfig({ DATABASE_URL: '...' }))` returns a container with real `StoryWorldStore`. Deviation: missing adapters bind **lazy** factories that throw a descriptive `NotImplementedError` on resolve (STT→AssemblyAI, LLM non-openai→LLM_PROVIDER=openai, JOB_QUEUE→SQS), not at binding time.
 
 ---
 
 ## Phase 9: OpenAI LLM Adapter
 
-### T9.1 — ✅ Done (partial) Real LLM model provider (`createLanguageModel`)
-- **Scope:** With the AI SDK migration (T5.4), the extraction loop takes an SDK `LanguageModel` rather than `LlmClient`, so real-provider wiring now happens in `src/adapters/llm-provider.ts`: `createLanguageModel(config)` switches on `LLM_PROVIDER` — `createOpenAI({ apiKey }).languageModel(config.LLM_STANDARD_MODEL)` for `openai`, `createAnthropic({ apiKey }).languageModel(...)` for `anthropic`, and `mock` → `NotImplementedError` (scripted models live in `tests/mocks`). Not yet built: the `LlmClient`-backed OpenAI adapter for `complete`/`extractStructured` (`complete` sends chat completion; `extractStructured` sends JSON mode + Zod parse with one parse-failure retry; tier routing `cheap` → `gpt-5-nano`, `standard` → `gpt-5-mini`, `best` → `gpt-5-pro` stays the plan).
-- **Files:** `src/adapters/llm-provider.ts`, `src/adapters/index.ts`, `tests/adapters/llm-provider.test.ts`
-- **Deps:** T2.1, T1.6
-- **Acceptance:** Tests assert the resolved model's `provider` starts with `openai`/`anthropic` and `modelId === 'gpt-5-mini'`; `createLanguageModel({ LLM_PROVIDER: 'mock' })` throws with a pointer to `tests/mocks`.
+### T9.1 — ✅ Done Real LLM provider (`createLanguageModel` + OpenAI `LlmClient`)
+- **Scope:** Two real-provider paths ship together:
+  - `createLanguageModel(config)` in `src/adapters/llm-provider.ts` — switches on `LLM_PROVIDER`: `createOpenAI({ apiKey }).languageModel(config.LLM_STANDARD_MODEL)` for `openai`, `createAnthropic({ apiKey }).languageModel(...)` for `anthropic`, `mock` → `NotImplementedError` (scripted models live in `tests/mocks`).
+  - `OpenAiLlm` (T9.1 origin spec) in `src/adapters/openai/llm-client.ts` — `LlmClient`-backed: `complete` sends `generateText`; `extractStructured` sends JSON-mode `generateObject` + Zod parse with **one parse-failure re-prompt**; tier routing `cheap`/`standard`/`best` → `gpt-5-nano`/`gpt-5-mini`/`gpt-5-pro` (overridable per-tier via `LLM_*_MODEL` config). Missing AI SDK token usage (`number | undefined`) coalesces to 0. `modelForTier` is an injectable test seam.
+- **Files:** `src/adapters/llm-provider.ts`, `src/adapters/openai/llm-client.ts`, `src/adapters/index.ts`, `tests/adapters/llm-provider.test.ts`, `tests/adapters/openai.test.ts`
+- **Deps:** T2.1, T1.6, T5.4
+- **Acceptance:** Provider tests assert `provider` starts with `openai`/`anthropic` and `modelId === 'gpt-5-mini'`; `createLanguageModel({ LLM_PROVIDER: 'mock' })` throws with a pointer to `tests/mocks`. Adapter tests (scripted `MockLanguageModelV4`) cover `complete` text+usage, `extractStructured` parse+validate, exactly-one retry on parse failure, and re-throw when the repair also fails.
 
-### T9.2 — OpenAI adapter barrel export
-- **Scope:** (Future) `src/adapters/openai/index.ts` re-exports the OpenAI-backed `LlmClient`.
-- **Files:** `src/adapters/openai/index.ts`
+### T9.2 — ✅ Done OpenAI adapter barrel export
+- **Scope:** `src/adapters/openai/index.ts` re-exports `OpenAiLlm` + `openaiLlm` factory; the top-level `src/adapters/index.ts` barrel re-exports them too.
+- **Files:** `src/adapters/openai/index.ts`, `src/adapters/index.ts`
 - **Deps:** T9.1
-- **Acceptance:** `import { openaiLlm } from '@/adapters/openai'` works once the adapter is built.
+- **Acceptance:** `import { openaiLlm } from '@/adapters/openai'` works.
 
-### T9.3 — Update production buildContainer for OpenAI
-- **Scope:** (Future) When `LLM_PROVIDER=openai`, wire the OpenAI-backed LLM into the container (even without this, `createLanguageModel` + `LLM_PROVIDER` already resolve a real `LanguageModel` for the extraction loop).
-- **Files:** `src/container/index.ts`
+### T9.3 — ✅ Done Production buildContainer wiring for OpenAI
+- **Scope:** `buildContainer` binds `LLM` to `openaiLlm({ apiKey, models: { cheap/standard/best from LLM_*_MODEL } })` when `LLM_PROVIDER=openai`; any other provider resolves a lazy `NotImplementedError` referencing `LLM_PROVIDER=openai` (T9.1). The extraction loop already resolves a real `LanguageModel` via `createLanguageModel`/`LLM_PROVIDER`.
+- **Files:** `src/container/index.ts`, `tests/container-memory.test.ts`
 - **Deps:** T9.2
-- **Acceptance:** End-to-end test: `TranscriptProcessor.process(job)` with real OpenAI (using a tiny transcript) returns a valid `CommitResult`.
+- **Acceptance:** Adapter tests + container test assert `container.get("LLM")` exposes `complete`/`extractStructured` (T9.3 test uses an injected scripted model, so no live OpenAI key is required). End-to-end `TranscriptProcessor` run against live OpenAI needs a real `LLM_API_KEY` (manually verified, not in CI).
 
 ---
 
