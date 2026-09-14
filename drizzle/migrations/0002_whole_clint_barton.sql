@@ -1,0 +1,1 @@
+ALTER TABLE "dictations" ADD COLUMN "summary" jsonb;

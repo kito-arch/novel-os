@@ -15,6 +15,20 @@
       "when": 1789380016215,
       "tag": "0001_scenes-chapter-number",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789391866139,
+      "tag": "0002_whole_clint_barton",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789400000000,
+      "tag": "0003_chapters-and-scene-content",
+      "breakpoints": true
     }
   ]
 }

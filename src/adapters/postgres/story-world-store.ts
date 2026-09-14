@@ -27,6 +27,7 @@ import type { Scene } from "@/domain/scenes";
 import type { StoryWorld } from "@/domain/story-world";
 import * as schema from "../../../drizzle/schema";
 import {
+  chapters,
   entityKnowledge,
   entities,
   entityTypes,
@@ -39,6 +40,7 @@ import {
   scenes,
   stories,
 } from "../../../drizzle/schema";
+import type { Chapter } from "@/domain/chapters";
 
 export interface PostgresStoryWorldStoreOptions {
   db: PostgresJsDatabase<typeof schema>;
@@ -418,6 +420,14 @@ export class PostgresStoryWorldStore implements StoryWorldStore {
     return this.readWorld(storyId, revision);
   }
 
+  async updateStoryTitle(storyId: string, title: string): Promise<void> {
+    await this.ensureStoryRow(storyId);
+    await this.db
+      .update(stories)
+      .set({ title, updatedAt: this.now() })
+      .where(eq(stories.id, storyId));
+  }
+
   // --- Entity-type registry --------------------------------------------------
   async upsertEntityType(storyId: string, def: Omit<EntityType, "id" | "createdAt">): Promise<string> {
     await this.ensureStoryRow(storyId);
@@ -548,6 +558,16 @@ export class PostgresStoryWorldStore implements StoryWorldStore {
     return rows.map(mediaRefFromRow);
   }
 
+  async removeMedia(entityId: string, mediaId: string): Promise<void> {
+    const result = await this.db
+      .delete(media)
+      .where(and(eq(media.id, mediaId), eq(media.entityId, entityId)))
+      .returning({ id: media.id });
+    if (result.length === 0) {
+      throw new Error(`media "${mediaId}" not found on entity "${entityId}"`);
+    }
+  }
+
   // --- Knowledge ---------------------------------------------------------------
   async insertKnowledge(
     storyId: string,
@@ -579,6 +599,111 @@ export class PostgresStoryWorldStore implements StoryWorldStore {
       )
       .orderBy(asc(entityKnowledge.createdAt));
     return rows.map(knowledgeFromRow);
+  }
+
+  // --- Chapters & prose scenes -------------------------------------------------
+  async listChapters(storyId: string): Promise<Chapter[]> {
+    const rows = await this.db
+      .select()
+      .from(chapters)
+      .where(eq(chapters.storyId, storyId))
+      .orderBy(asc(chapters.position), asc(chapters.createdAt));
+    return rows.map(chapterFromRow);
+  }
+
+  async createChapter(storyId: string, data: { title: string; position: number }): Promise<string> {
+    await this.ensureStoryRow(storyId);
+    const id = randomUUID();
+    await this.db.insert(chapters).values({
+      id,
+      storyId,
+      title: data.title,
+      position: data.position,
+      createdAt: this.now(),
+    });
+    return id;
+  }
+
+  async updateChapter(
+    storyId: string,
+    chapterId: string,
+    patch: { title?: string; position?: number },
+  ): Promise<void> {
+    await this.db
+      .update(chapters)
+      .set({ ...(patch.title !== undefined ? { title: patch.title } : {}), ...(patch.position !== undefined ? { position: patch.position } : {}) })
+      .where(and(eq(chapters.id, chapterId), eq(chapters.storyId, storyId)));
+  }
+
+  async deleteChapter(storyId: string, chapterId: string): Promise<void> {
+    await this.db
+      .delete(chapters)
+      .where(and(eq(chapters.id, chapterId), eq(chapters.storyId, storyId)));
+  }
+
+  async listProseScenes(storyId: string, chapterId?: string): Promise<Scene[]> {
+    const cond = chapterId
+      ? and(eq(scenes.storyId, storyId), eq(scenes.chapterId, chapterId))
+      : eq(scenes.storyId, storyId);
+    const rows = await this.db
+      .select()
+      .from(scenes)
+      .where(cond)
+      .orderBy(asc(scenes.position), asc(scenes.createdAt));
+    return rows.map(sceneFromRow);
+  }
+
+  async getProseScene(storyId: string, sceneId: string): Promise<Scene | null> {
+    const rows = await this.db
+      .select()
+      .from(scenes)
+      .where(and(eq(scenes.id, sceneId), eq(scenes.storyId, storyId)))
+      .limit(1);
+    return rows[0] ? sceneFromRow(rows[0]) : null;
+  }
+
+  async createProseScene(
+    storyId: string,
+    data: { chapterId: string; title?: string; content?: string; position: number },
+  ): Promise<string> {
+    await this.ensureStoryRow(storyId);
+    const id = randomUUID();
+    const now = this.now();
+    await this.db.insert(scenes).values({
+      id,
+      storyId,
+      chapterId: data.chapterId,
+      title: data.title ?? null,
+      content: data.content ?? null,
+      position: data.position,
+      eventIds: [],
+      participantIds: [],
+      revision: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return id;
+  }
+
+  async updateProseScene(
+    storyId: string,
+    sceneId: string,
+    patch: { title?: string; content?: string; position?: number },
+  ): Promise<void> {
+    const update: Record<string, unknown> = { updatedAt: this.now() };
+    if (patch.title !== undefined) update.title = patch.title;
+    if (patch.content !== undefined) update.content = patch.content;
+    if (patch.position !== undefined) update.position = patch.position;
+    await this.db
+      .update(scenes)
+      .set(update)
+      .where(and(eq(scenes.id, sceneId), eq(scenes.storyId, storyId)));
+  }
+
+  async deleteProseScene(storyId: string, sceneId: string): Promise<void> {
+    await this.db
+      .delete(scenes)
+      .where(and(eq(scenes.id, sceneId), eq(scenes.storyId, storyId)));
   }
 
   // --- Helpers ----------------------------------------------------------------
@@ -814,23 +939,42 @@ function sceneToRow(scene: Scene, storyId: string, revision: number) {
     whenNormalized,
     summary: scene.summary,
     chapterNumber: scene.chapterNumber,
+    chapterId: scene.chapterId,
+    position: scene.position,
+    content: scene.content,
     eventIds: scene.eventIds,
     participantIds: scene.participantIds,
     revision,
     createdAt: scene.createdAt,
+    updatedAt: scene.updatedAt,
   };
 }
 
 function sceneFromRow(row: typeof scenes.$inferSelect): Scene {
   return {
     id: row.id,
+    storyId: row.storyId,
     title: row.title,
     settingId: row.settingId,
     when: whenFromColumns(row.whenRaw, row.whenNormalized),
     summary: row.summary,
     chapterNumber: row.chapterNumber ?? null,
+    chapterId: row.chapterId ?? null,
+    position: row.position ?? 0,
+    content: row.content ?? null,
     eventIds: (row.eventIds ?? []) as string[],
     participantIds: (row.participantIds ?? []) as string[],
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt ?? row.createdAt,
+  };
+}
+
+function chapterFromRow(row: typeof chapters.$inferSelect): Chapter {
+  return {
+    id: row.id,
+    storyId: row.storyId,
+    title: row.title,
+    position: row.position,
     createdAt: row.createdAt,
   };
 }

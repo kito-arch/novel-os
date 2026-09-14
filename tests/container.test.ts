@@ -8,6 +8,7 @@ import { loadConfig } from "@/config";
 
 const stubStoryWorldStore: StoryWorldStore = {
   getWorld: async () => null,
+  updateStoryTitle: async () => {},
   commit: async () => ({
     revision: 1,
     entityTypesCreated: 0,
@@ -35,8 +36,18 @@ const stubStoryWorldStore: StoryWorldStore = {
   listEntities: async () => [],
   attachMedia: async () => "media-1",
   getMedia: async () => [],
+  removeMedia: async () => {},
   insertKnowledge: async () => "knowledge-1",
   getKnowledge: async () => [],
+  listChapters: async () => [],
+  createChapter: async () => "chapter-1",
+  updateChapter: async () => {},
+  deleteChapter: async () => {},
+  listProseScenes: async () => [],
+  getProseScene: async () => null,
+  createProseScene: async () => "scene-1",
+  updateProseScene: async () => {},
+  deleteProseScene: async () => {},
 };
 
 describe("ioctopus container", () => {

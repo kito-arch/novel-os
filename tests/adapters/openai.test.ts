@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { openaiLlm } from "@/adapters/openai";
 import { storyChangeSchema } from "@/domain/proposals";
-import { scriptedModel } from "../mocks/sdk-model";
+import { scriptedModel } from "../mocks";
 
 const TinySchema = z.object({ title: z.string().min(1) });
 

@@ -420,61 +420,61 @@ SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeo
 
 ## Phase 12: API Routes
 
-### T12.1 — POST /api/dictations
+### T12.1 — POST /api/dictations ✅ Done
 - **Scope:** Accept `multipart/form-data` with audio file + `storyId`. Authenticated user's `userId` comes from the session, not the form. Save audio to temp storage, create a dictation row (`saveDictation({ storyId, userId, status: 'pending' })`), submit to AssemblyAI with a **clean webhook URL (no query params)**, persist the returned `transcript_id` as `providerJobId`, return `{ dictationId, jobId }`. User attribution lives in the DB row, keyed by `transcript_id`, never in the webhook URL.
 - **Files:** `app/api/dictations/route.ts`
 - **Deps:** T2.5, T2.4, T4.4
 - **Acceptance:** `curl -F "audio=@test.mp3" -F "storyId=abc" -H "x-user-id: u1" localhost:3000/api/dictations` returns `{ jobId: "..." }`; the dictation row carries `userId = "u1"` and the AssemblyAI `transcript_id` as `providerJobId`.
 
-### T12.2 — GET /api/dictations/[id]
+### T12.2 — GET /api/dictations/[id] ✅ Done
 - **Scope:** Return dictation job status + `CommitResult` summary when complete.
 - **Files:** `app/api/dictations/[id]/route.ts`
 - **Deps:** T12.1
 - **Acceptance:** After processing completes, GET returns `{ status: "completed", summary: { events: 3, ... } }`.
 
-### T12.3 — GET /api/stories/[id]
+### T12.3 — GET /api/stories/[id] ✅ Done
 - **Scope:** Return full `StoryWorld` for a story.
 - **Files:** `app/api/stories/[id]/route.ts`
 - **Deps:** T2.3
 - **Acceptance:** Returns JSON with all entities, events, facts, knowledge, etc.
 
-### T12.4 — PATCH /api/stories/[id]/entities/[entityId]
+### T12.4 — PATCH /api/stories/[id]/entities/[entityId] ✅ Done
 - **Scope:** Manual entity edit. Accepts partial attribute updates over `Entity` (`attributes`, `aliases`, `media`) — validated against the entity's `EntityType` def (`validateAttributes`/`validateEntity`). Applies via `commit` with `confidence: explicit`.
 - **Files:** `app/api/stories/[id]/entities/[entityId]/route.ts`
 - **Deps:** T2.3
 - **Acceptance:** PATCH updates entity attributes, bumps revision, logs to revisions table.
 
-### T12.5 — POST /api/stories/[id]/ask
+### T12.5 — POST /api/stories/[id]/ask ✅ Done
 - **Scope:** Accept `{ question: string }`, return `{ answer: string }`. Calls `askStory` from reasoning layer.
 - **Files:** `app/api/stories/[id]/ask/route.ts`
 - **Deps:** T7.1
 - **Acceptance:** POST with a question returns a contextual answer from the story world.
 
-### T12.6 — POST /api/stories/[id]/analyze
+### T12.6 — POST /api/stories/[id]/analyze ✅ Done
 - **Scope:** Accept `{ analysisType: string }`, return `{ reports: ContinuityReport[] }`. Calls `checkContinuity`.
 - **Files:** `app/api/stories/[id]/analyze/route.ts`
 - **Deps:** T7.3
 - **Acceptance:** POST with `analysisType: "contradictions"` returns contradiction reports.
 
-### T12.7 — POST /api/stories/[id]/knowledge
+### T12.7 — POST /api/stories/[id]/knowledge ✅ Done
 - **Scope:** Accept `{ entityName, factDescription }`, return `{ status: 'known'|'unknown', context: string }`. Calls `doesEntityKnow`.
 - **Files:** `app/api/stories/[id]/knowledge/route.ts`
 - **Deps:** T7.2
 - **Acceptance:** Returns correct knowledge status.
 
-### T12.8 — POST /api/stories/[id]/entity-types (user-created types)
+### T12.8 — POST /api/stories/[id]/entity-types (user-created types) ✅ Done
 - **Scope:** Accept `{ name, pluralName, baseKind, description, attributeDefs }` → registers a new `EntityType` via `upsertEntityType` with `origin: 'user'`. Validate `name` uniqueness, `baseKind` from `BASE_KIND_CATALOG`, and attribute defs via the Zod schemas. This is the "user creates a type" flow of §5.3.
 - **Files:** `app/api/stories/[id]/entity-types/route.ts`
 - **Deps:** T2.3, T1.1
 - **Acceptance:** POST a `starship` type with `baseKind: 'physical'` → appears in `GET /api/stories/[id]` registry and in the sidebar sections. Invalid `baseKind` → 400.
 
-### T12.9 — POST /api/stories/[id]/entities/[entityId]/media
+### T12.9 — POST /api/stories/[id]/entities/[entityId]/media ✅ Done
 - **Scope:** Accept `multipart/form-data`: file + `role` (`portrait` | `gallery`) + optional `caption`. Store file, call `attachMedia`. **Reject with 400 when the entity's `baseKind.supportsMedia` is false** (abstract types are text-only). Enforce one `portrait` per entity (new portrait replaces old).
 - **Files:** `app/api/stories/[id]/entities/[entityId]/media/route.ts`
 - **Deps:** T2.3, T1.2
 - **Acceptance:** Upload a photo to a character → shows in portrait slot; upload to `planet` → gallery; upload to `faction` (abstract) → 400.
 
-### T12.10 — POST /api/hooks/stt-callback
+### T12.10 — POST /api/hooks/stt-callback ✅ Done
 - **Scope:** AssemblyAI webhook endpoint. Verify the callback carries `WEBHOOK_SECRET` (AssemblyAI `webhook_auth_header_name`/`value`) → 401 otherwise. **Never trust URL params or the body for user/story identity**: resolve `transcript_id` → dictation via `findDictationByProviderJobId`, then update the dictation, fetch the transcript via `getTranscript`, set `status`, and enqueue the `extraction` job carrying `{ dictationId, storyId }`. Ownership checks (`userId`) are enforced in the route/auth layer.
 - **Files:** `app/api/hooks/stt-callback/route.ts`
 - **Deps:** T10.1, T5.4, T2.4
@@ -484,53 +484,140 @@ SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeo
 
 ## Phase 13: UI — MVP Screens
 
-### T13.1 — Layout + left rail navigation
+### T13.1 — Layout + left rail navigation ✅ Done
 - **Scope:** Create `app/(studio)/layout.tsx` with persistent left sidebar. Top: Manuscript / Talk. Core entity sections: Characters / Places / Relationships / Timeline / Secrets / Knowledge / Goals / Open Questions / Plot Threads. Below them: **dynamic entity sections derived from the registry** (each `entityTypes.pluralName`, e.g. "Starships", "Factions") from `GET /api/stories/[id]`. Use Tailwind. Mobile-responsive (sidebar collapses to hamburger).
 - **Files:** `app/(studio)/layout.tsx`, `src/ui/sidebar.tsx`
 - **Deps:** T0.1
 - **Acceptance:** Layout renders. Sidebar links navigate between sections.
 
-### T13.2 — /talk screen: mic capture + upload
+### T13.2 — /talk screen: mic capture + upload ✅ Done
 - **Scope:** Create `app/(studio)/talk/page.tsx`. MediaRecorder API for mic capture. On stop, upload audio blob to `POST /api/dictations`. Show upload progress. Display `{ jobId }` returned.
 - **Files:** `app/(studio)/talk/page.tsx`, `src/ui/mic-capture.tsx`
 - **Deps:** T12.1
 - **Acceptance:** Click mic → record → stop → upload → see job ID. Browser mic permission prompt works.
 
-### T13.3 — /talk screen: processing status + result card
+### T13.3 — /talk screen: processing status + result card ✅ Done
 - **Scope:** Poll `GET /api/dictations/[id]` every 2s. Show spinner during processing. On complete, display result card: "Processed N words — Added: {per-entity-type counts}, {events} events, {scenes} scenes, ⚠️ {N} contradictions" (counts from `CommitResult.entitiesCreatedByType`, e.g. "Added: 2 starships, 3 events"). Show contradiction warnings prominently.
 - **Files:** `app/(studio)/talk/page.tsx`, `src/ui/result-card.tsx`
 - **Deps:** T12.2, T13.2
 - **Acceptance:** After upload, status updates in real-time. Result card shows correct counts. Contradiction warning is visible.
 
-### T13.4 — /story screen: entity list + detail pane
+### T13.4 — /story screen: entity list + detail pane ✅ Done
 - **Scope:** Create `app/(studio)/story/page.tsx`. Fetches `GET /api/stories/[id]`. Left sub-nav built from the registry: core sections (Characters / Places / Relationships / Timeline / Secrets / Knowledge / Goals / Open Questions / Plot Threads) plus one section per registered entity type (pluralName). Right pane: detail for selected entity. Each entity card/panel renders **declared attributes only** (from `attributeDefs`) — schema-driven, with a media section when `baseKind.supportsMedia`. No per-kind branches.
 - **Files:** `app/(studio)/story/page.tsx`, `src/ui/entity-list.tsx`, `src/ui/entity-detail.tsx`
 - **Deps:** T12.3
 - **Acceptance:** Selecting a character shows their full attribute sheet (sub-sections: knowledge by timeline, interactions, appearances, contradictions — core flow). Selecting a place shows its events. Selecting a `starship` shows class/armament/captain and its gallery.
 
-### T13.5 — /character/[id] screen
+### T13.5 — /character/[id] screen ✅ Done
 - **Scope:** Create `app/(studio)/character/[id]/page.tsx`. Full **core** character sheet (this is a core flow): portrait (upload → `POST /api/stories/[id]/entities/[entityId]/media`), name, aliases, goals, fears, desires, beliefs, secrets, appearance, personality, backstory. Sub-sections: Knowledge by timeline, Interactions, Appearance history, Contradictions. (Dynamic entity types share the generic `entity-detail`, not this page.)
 - **Files:** `app/(studio)/character/[id]/page.tsx`, `src/ui/character-sheet.tsx`
 - **Deps:** T12.3
 - **Acceptance:** Navigating to `/character/sarah-id` shows Sarah's full sheet with all attributes populated.
 
-### T13.6 — /scene/[id] screen
+### T13.6 — /scene/[id] screen ✅ Done
 - **Scope:** Create `app/(studio)/scene/[id]/page.tsx`. Scene card: setting (any entity — place, planet, landscape), time, participants present, what happened, what changed, involved objects, knowledge gained, knowledge concealed, conflict.
 - **Files:** `app/(studio)/scene/[id]/page.tsx`, `src/ui/scene-card.tsx`
 - **Deps:** T12.3
 - **Acceptance:** Scene detail renders with all fields.
 
-### T13.7 — /ask screen
+### T13.7 — /ask screen ✅ Done
 - **Scope:** Create `app/(studio)/ask/page.tsx`. Chat-style interface: user types question, POST to `/api/stories/[id]/ask`, display answer. Show loading state during LLM call.
 - **Files:** `app/(studio)/ask/page.tsx`, `src/ui/ask-chat.tsx`
 - **Deps:** T12.5
 - **Acceptance:** Type a question, get a contextual answer from the story world.
 
-### T13.8 — /debug screen
+### T13.8 — /debug screen ✅ Done
 - **Scope:** Create `app/(studio)/debug/page.tsx`. Dropdown to select analysis type (contradictions / anachronisms / motivation-gaps / relationship-state / dangling-threads / all). POST to `/api/stories/[id]/analyze`. Display reports as cards with severity indicators.
 - **Files:** `app/(studio)/debug/page.tsx`, `src/ui/debug-reports.tsx`
 - **Deps:** T12.6
 - **Acceptance:** Selecting "contradictions" and clicking Analyze shows contradiction reports.
+
+---
+
+## Phase 16: Manual Authoring & Direct Entity Creation
+
+Design: three authoring modes run in parallel — (a) voice dictation → LLM extraction (existing), (b) typed text → LLM extraction (same pipeline, no STT hop), (c) direct form-based entity creation (no LLM at all). All three commit through the same `StoryWorldStore.commit` path. Builtin entity types (character/place/object) are auto-registered on first direct-create. Media upload (portrait + gallery) is available for all `supportsMedia` base kinds directly from the entity detail and character sheet.
+
+### T16.1 — POST /api/stories/[id]/extract-text
+- **Scope:** Accept `{ text: string }`. Create a dictation row (`status: "processing"`, `transcript: text`), run `TranscriptProcessor.process()` synchronously (no STT hop — text arrives pre-transcribed), update the row to `completed`/`failed` with the `CommitResult` summary, return `{ dictationId }`. The same `GET /api/dictations/[id]` polling endpoint works unchanged.
+- **Files:** `src/app/api/stories/[id]/extract-text/route.ts`
+- **Deps:** T5.4, T12.1, T12.2
+- **Acceptance:** POST `{ text: "Sarah walked into the bridge..." }` → `{ dictationId }` → poll → `{ status: "completed", summary: {...} }`.
+
+### T16.2 — POST /api/stories/[id]/entities (direct entity creation)
+- **Scope:** Accept `{ name, entityTypeName, aliases?, attributes? }`. Looks up entity type in the world's registry (case-insensitive); if the type is a builtin (character/place/object) and not yet registered for this story, auto-registers it via `upsertEntityType` (creating the story shell if needed). Validates attributes against the type's `attributeDefs`, builds a `Commit`, and calls `store.commit()`. Returns the created entity. No LLM involved.
+- **Files:** `src/app/api/stories/[id]/entities/route.ts`
+- **Deps:** T2.3, T1.2, T12.3
+- **Acceptance:** POST `{ name: "Sarah", entityTypeName: "character" }` to a fresh story → entity created, story world exists, revision = 1. Invalid attributes → 400. Unknown non-builtin type → 404.
+
+### T16.3 — Talk screen: "Write" tab
+- **Scope:** Add a "Speak / Write" tab pair to the Talk screen. The "Write" tab shows a plain textarea + submit button; on submit it POSTs to `POST /api/stories/[id]/extract-text`. The existing ResultCard + polling flow is reused unchanged. The mic capture moves under the "Speak" tab.
+- **Files:** `src/ui/talk-screen.tsx`
+- **Deps:** T16.1, T13.2
+- **Acceptance:** User can type a scene description, submit, and see the same result card as after audio dictation.
+
+### T16.4 — Entity creation form (modal)
+- **Scope:** Implement `EntityCreateModal` — a modal with entity type selector (registered types + builtins not yet registered), name field (required), aliases field (comma-separated), and dynamic attribute fields from `attributeDefs` (multi fields accept comma-separated values). On submit calls `POST /api/stories/[id]/entities`; on success closes and calls `onCreated`. Add a global "+ New" button in the entity list + a "create your first character" link in the empty-story missing state.
+- **Files:** `src/ui/entity-create-modal.tsx`, `src/ui/entity-list.tsx`, `src/ui/story-screen.tsx`
+- **Deps:** T16.2
+- **Acceptance:** Click "+ New", fill name + type, submit → entity appears in the list without page reload.
+
+### T16.5 — Media upload in entity detail + character sheet
+- **Scope:** Implement `MediaUpload` — a reusable component (`storyId`, `entityId`, `role`, `onUploaded`). Add a media section to `EntityDetail` for entities whose `baseKind.supportsMedia` is true (portrait slot + gallery grid; each image has a remove button via PATCH media list sync). Add portrait upload to the character screen Overview tab so users can set a photo without going to Edit. Gallery images also show a remove button.
+- **Files:** `src/ui/media-upload.tsx`, `src/ui/entity-detail.tsx`, `src/ui/character-screen.tsx`
+- **Deps:** T12.9
+- **Acceptance:** Upload portrait to a character → shows immediately in the portrait slot. Upload gallery image to a place → appears in the gallery grid. Click remove → image disappears.
+
+---
+
+## Phase 17: Multi-Story Dashboard, Chapters & Prose Editor, @mention System
+
+Design: replace single-story redirect with a multi-story dashboard backed by localStorage. Introduce a per-story routing tree (`/story/[storyId]/...`) with nested layout. Add chapters and prose scenes to the data model (separate from LLM-extracted domain scenes). Implement an `@[Name](id)` mention syntax for prose that links to entities; clicking a chip opens a right-side drawer. All entity types use a single unified page (`/entity/[entityId]`).
+
+### T17.1 — Multi-story dashboard ✅ Done
+- **Scope:** Replace `app/page.tsx` redirect with a real dashboard: `useSyncExternalStore`-backed story list from localStorage + create form. Dashboard `create` calls `PATCH /api/stories/[id]` with the title before navigation so the story row is never "Untitled story". `PATCH /api/stories/[id]` handler added; `StoryWorldStore.updateStoryTitle` method added to the port + both adapters.
+- **Files:** `src/app/page.tsx`, `src/ui/dashboard.tsx`, `src/app/api/stories/[id]/route.ts`, `src/container/story-world-store.ts`, `src/adapters/postgres/story-world-store.ts`, `src/adapters/mock/story-world-store.ts`
+- **Acceptance:** Creating a story navigates to `/story/[id]`; story title is correct in DB on first load. Dashboard lists all stories from localStorage.
+
+### T17.2 — Per-story routing tree + layout ✅ Done
+- **Scope:** Introduce `/story/[storyId]/` route group: `layout.tsx` (sidebar + main without `lg:pl-72` double-offset), `page.tsx` (story bible), `talk/page.tsx` (narrate), `scene/[id]/page.tsx` (prose editor), `character/[id]/page.tsx` (character sheet), `entity/[entityId]/page.tsx` (unified entity page). Remove old `(studio)` group redirect.
+- **Files:** `src/app/story/[storyId]/layout.tsx`, `src/app/story/[storyId]/page.tsx`, `src/app/story/[storyId]/talk/page.tsx`, `src/app/story/[storyId]/scene/[id]/page.tsx`, `src/app/story/[storyId]/character/[id]/page.tsx`, `src/app/story/[storyId]/entity/[entityId]/page.tsx`
+- **Acceptance:** All routes render. Sidebar is story-scoped with no spurious left margin.
+
+### T17.3 — Chapters & prose scenes data model ✅ Done
+- **Scope:** Add `chapters` table + `scenes.(content, chapter_id, position)` columns via migrations. Define `Chapter` domain type. Extend `StoryWorldStore` with `listChapters`, `createChapter`, `updateChapter`, `deleteChapter`, `listProseScenes`, `getProseScene`, `createProseScene`, `updateProseScene`, `deleteProseScene`. Implement in both Postgres and mock adapters. Add chapter/scene CRUD API routes.
+- **Files:** `drizzle/schema.ts`, `drizzle/migrations/0002_whole_clint_barton.sql`, `drizzle/migrations/0003_chapters-and-scene-content.sql`, `src/domain/chapters.ts`, `src/domain/scenes.ts`, `src/container/story-world-store.ts`, adapters, `src/app/api/stories/[id]/chapters/route.ts`, `src/app/api/stories/[id]/chapters/[chapterId]/route.ts`, `src/app/api/stories/[id]/chapters/[chapterId]/scenes/route.ts`, `src/app/api/stories/[id]/scenes/[sceneId]/route.ts`
+- **Acceptance:** Create chapter → add scenes → PATCH content → GET returns updated content.
+
+### T17.4 — Scene prose editor with @mention autocomplete ✅ Done
+- **Scope:** `MentionInput` — contenteditable div that triggers an autocomplete dropdown on `@`; selects an entity and inserts `@[Name](entityId)` token; HoverCard on hover shows entity details. `SceneRenderer` parses stored content and renders tokens as styled chips. `SceneDetailScreen` wires both: 1.5s debounce autosave for content, 1s debounce for title; fires `novel-os:world-changed` when title changes to refresh the sidebar.
+- **Files:** `src/ui/mention-input.tsx`, `src/ui/scene-renderer.tsx`, `src/ui/scene-detail-screen.tsx`
+- **Acceptance:** Typing `@S` shows matching entities; selecting inserts the token. Saving persists content. Sidebar scene title updates within ~1s.
+
+### T17.5 — Entity drawer on mention chip click ✅ Done
+- **Scope:** `EntityDrawer` — fixed right-side panel (w-80, z-50, border-l) showing entity portrait, name, aliases, up to 6 attribute values, and "Open full page" footer link. Opens when user clicks an `@[Name]` chip (via `onEntityClick` callback threaded through `MentionInput` and `SceneRenderer`). Closes on Escape or outside click (50ms delay).
+- **Files:** `src/ui/entity-drawer.tsx`, `src/ui/scene-detail-screen.tsx`, `src/ui/mention-input.tsx`, `src/ui/scene-renderer.tsx`
+- **Acceptance:** Clicking an @-mention chip slides in the drawer. Escape or outside click closes it.
+
+### T17.6 — Unified entity page for all entity types ✅ Done
+- **Scope:** `EntityScreen` — Overview (attributes, media, relationships/facts for characters), Edit (`EntityDetail`), and References (`EntityReferences`) tabs for any entity type. `EntityReferences` lists prose scenes that @-mention the entity via `GET /api/stories/[id]/entities/[entityId]/references`. All entity links (sidebar, entity-list, HoverCards) route to `/story/[storyId]/entity/[entityId]`. Characters filter pill restored in the story bible.
+- **Files:** `src/ui/entity-screen.tsx`, `src/ui/entity-references.tsx`, `src/app/story/[storyId]/entity/[entityId]/page.tsx`, `src/app/api/stories/[id]/entities/[entityId]/references/route.ts`, `src/ui/entity-list.tsx`
+- **Acceptance:** `/story/[id]/entity/[entityId]` renders for any type. References tab shows mentioning scenes. Characters tab appears in entity-list filter pills.
+
+### T17.7 — Chapter create modal + sidebar enhancements ✅ Done
+- **Scope:** `ChapterCreateModal` — proper modal with title input replaces `window.prompt()`. Sidebar chapters section has a `+` button that opens the modal. Sidebar listens for `novel-os:world-changed` events to refresh chapters/scenes/entities without a full page reload.
+- **Files:** `src/ui/chapter-create-modal.tsx`, `src/ui/sidebar.tsx`
+- **Acceptance:** Clicking `+` opens the modal. After creation, sidebar chapters list updates.
+
+### T17.8 — Story title inline editing + auto-sync ✅ Done
+- **Scope:** `StoryScreen` renders the title as an `<input>` with 1s debounce autosave via `PATCH /api/stories/[id]`; fires `novel-os:world-changed` and `reload()` on save. Auto-sync `useEffect`: if the DB title is "Untitled story", reads localStorage and silently patches. All hooks moved before early returns (Rules of Hooks fix). Empty-state copy updated to "Narrate" (was "Talk").
+- **Files:** `src/ui/story-screen.tsx`
+- **Acceptance:** Editing the title saves to DB. Sidebar and story bible reflect the new title within ~1s. No story ever shows "Untitled story" after creation.
+
+### T17.9 — Mock adapters relocated to src/adapters/mock ✅ Done
+- **Scope:** Move mock adapters from `tests/mocks/` to `src/adapters/mock/` so the dev server can import them without crossing the `src/tests` boundary. Add `src/adapters/mock/container.ts` (moved from `tests/mocks/memory-container.ts`) and `src/adapters/mock/index.ts` barrel. Update all import paths in tests.
+- **Files:** `src/adapters/mock/`, `src/adapters/index.ts`, test import paths
+- **Acceptance:** `import { MockStoryWorldStore } from "@/adapters/mock"` works. All existing tests pass.
 
 ---
 

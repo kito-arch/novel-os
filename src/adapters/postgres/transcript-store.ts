@@ -3,6 +3,7 @@ import { and, asc, eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { Clock } from "@/container/clock";
 import type { Dictation, TranscriptStore } from "@/container/transcript-store";
+import type { CommitResult } from "@/domain/commits";
 import * as schema from "../../../drizzle/schema";
 import { dictations, stories } from "../../../drizzle/schema";
 
@@ -35,6 +36,7 @@ export class PostgresTranscriptStore implements TranscriptStore {
     wordCount?: number;
     durationSeconds?: number;
     status: Dictation["status"];
+    summary?: CommitResult | null;
   }): Promise<string> {
     // dictations.story_id FKs to stories; the store creates the story shell
     // (like PostgresStoryWorldStore) so transcript capture can precede any
@@ -59,6 +61,7 @@ export class PostgresTranscriptStore implements TranscriptStore {
       wordCount: params.wordCount ?? null,
       durationSeconds: params.durationSeconds ?? null,
       status: params.status,
+      summary: params.summary ?? null,
       processedAt: null,
       createdAt: this.now(),
     });
@@ -102,6 +105,7 @@ export class PostgresTranscriptStore implements TranscriptStore {
       wordCount?: number;
       durationSeconds?: number;
       status?: Dictation["status"];
+      summary?: CommitResult | null;
       processedAt?: Date;
     },
   ): Promise<void> {
@@ -139,6 +143,7 @@ function dictationFromRow(row: typeof dictations.$inferSelect): Dictation {
     wordCount: row.wordCount ?? null,
     durationSeconds: row.durationSeconds ?? null,
     status: row.status,
+    summary: row.summary ?? null,
     createdAt: row.createdAt,
     processedAt: row.processedAt ?? null,
   };

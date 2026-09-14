@@ -6,3 +6,5 @@ export { AssemblyAiStt, assemblyaiStt } from "./assemblyai";
 export type { AssemblyAiSttOptions } from "./assemblyai";
 export { SqsJobQueue, sqsQueue } from "./sqs";
 export type { SqsJobQueueOptions } from "./sqs";
+export * from "./mock/index";
+export { buildDevContainer } from "./mock/container";

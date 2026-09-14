@@ -1,6 +1,7 @@
 import { buildContainer } from "@/container";
 import type { ExtractionJob } from "@/container/job-queue";
 import { SqsJobQueue } from "@/adapters/sqs";
+import { aggregateCommitResults } from "@/services/llm-agent/transcript-processor";
 
 // T11.2 — SQS consumer worker for the "extraction" job type. Boots the real
 // container (DATABASE_URL + SQS_QUEUE_URL + real adapters must be set in env),
@@ -15,6 +16,12 @@ async function main(): Promise<void> {
     try {
       const result = await container.get("TRANSCRIPT_PROCESSOR").process(job);
       console.log(`[Extraction] Completed ${job.dictationId}:`, result);
+      const summary = aggregateCommitResults(result.commitResults);
+      await container.get("TRANSCRIPT_STORE").updateDictation(job.dictationId, {
+        status: "completed",
+        summary,
+        processedAt: new Date(),
+      });
     } catch (error) {
       console.error(`[Extraction] Handler failed for ${job.dictationId}:`, error);
       throw error;

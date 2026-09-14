@@ -14,6 +14,9 @@ import {
 import { PostgresStoryWorldStore, PostgresTranscriptStore } from "@/adapters/postgres";
 import { SqsJobQueue } from "@/adapters/sqs";
 import { TranscriptProcessor } from "@/services/llm-agent/transcript-processor";
+import { askStory } from "@/services/reasoning/ask";
+import { checkContinuity } from "@/services/reasoning/continuity";
+import { doesEntityKnow } from "@/services/reasoning/knowledge";
 import * as databaseSchema from "../../drizzle/schema";
 import type { AppRegistry } from "./registry";
 
@@ -122,6 +125,36 @@ export function buildContainer(config: AppConfig = loadConfig()): TypedContainer
       );
     });
   }
+
+  // --- Reasoning services (Phases 6–7) -------------------------------------
+  // Plain functions closed over the resolved stores + LlmClient port. Lazy
+  // factories: resolving LLM/STORY_WORLD_STORE only happens when the token
+  // itself is requested, so a misconfigured LLM surfaces when a reasoning
+  // route runs, not at container build.
+  container.bind("ASK_STORY").toFactory(
+    (resolve) => (storyId: string, question: string) =>
+      askStory(
+        { store: resolve("STORY_WORLD_STORE"), llm: resolve("LLM") },
+        storyId,
+        question,
+      ),
+  );
+  container.bind("KNOWLEDGE_QUERY").toFactory(
+    (resolve) => (
+      storyId: string,
+      entityId: string,
+      factDescription: string,
+      timeline?: string | null,
+    ) => doesEntityKnow(resolve("STORY_WORLD_STORE"), storyId, entityId, factDescription, timeline),
+  );
+  container.bind("CONTINUITY_CHECKER").toFactory(
+    (resolve) => (storyId: string, analysisType: Parameters<typeof checkContinuity>[2]) =>
+      checkContinuity(
+        { store: resolve("STORY_WORLD_STORE"), llm: resolve("LLM") },
+        storyId,
+        analysisType,
+      ),
+  );
 
   return container;
 }

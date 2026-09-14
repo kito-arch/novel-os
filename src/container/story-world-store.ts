@@ -1,8 +1,10 @@
+import type { Chapter } from "../domain/chapters";
 import type { Commit, CommitResult } from "../domain/commits";
 import type { Entity, MediaRef } from "../domain/entities";
 import type { EntityType } from "../domain/entity-types";
 import type { StoryEvent } from "../domain/events";
 import type { EntityKnowledge } from "../domain/knowledge";
+import type { Scene } from "../domain/scenes";
 import type { StoryWorld } from "../domain/story-world";
 
 export interface EntityRef {
@@ -32,6 +34,7 @@ export interface Snapshot {
 export interface StoryWorldStore {
   // World access + append-only revision history.
   getWorld(storyId: string): Promise<StoryWorld | null>;
+  updateStoryTitle(storyId: string, title: string): Promise<void>;
   commit(commit: Commit): Promise<CommitResult>;
   getEntity(storyId: string, entityId: string): Promise<Entity | null>;
   queryEvents(storyId: string, query?: EventQuery): Promise<StoryEvent[]>;
@@ -49,6 +52,7 @@ export interface StoryWorldStore {
   // Media (only for base kinds that support it).
   attachMedia(entityId: string, media: Omit<MediaRef, "id" | "createdAt">): Promise<string>;
   getMedia(entityId: string): Promise<MediaRef[]>;
+  removeMedia(entityId: string, mediaId: string): Promise<void>;
 
   // Knowledge: any entity type can "know".
   insertKnowledge(
@@ -56,4 +60,16 @@ export interface StoryWorldStore {
     knowledge: Omit<EntityKnowledge, "id" | "createdAt">,
   ): Promise<string>;
   getKnowledge(storyId: string, subjectEntityId: string): Promise<EntityKnowledge[]>;
+
+  // Chapters & prose scenes — the actual written narrative.
+  listChapters(storyId: string): Promise<Chapter[]>;
+  createChapter(storyId: string, data: { title: string; position: number }): Promise<string>;
+  updateChapter(storyId: string, chapterId: string, patch: { title?: string; position?: number }): Promise<void>;
+  deleteChapter(storyId: string, chapterId: string): Promise<void>;
+
+  listProseScenes(storyId: string, chapterId?: string): Promise<Scene[]>;
+  getProseScene(storyId: string, sceneId: string): Promise<Scene | null>;
+  createProseScene(storyId: string, data: { chapterId: string; title?: string; content?: string; position: number }): Promise<string>;
+  updateProseScene(storyId: string, sceneId: string, patch: { title?: string; content?: string; position?: number }): Promise<void>;
+  deleteProseScene(storyId: string, sceneId: string): Promise<void>;
 }

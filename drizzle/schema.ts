@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type { TimelineRef } from "../src/domain/events";
 import type { AttributeDef, AttributeValue } from "../src/domain/entity-types";
+import type { CommitResult } from "../src/domain/commits";
 
 export const confidenceEnum = pgEnum("confidence", [
   "explicit",
@@ -77,6 +78,7 @@ export const dictations = pgTable(
     wordCount: integer("word_count"),
     durationSeconds: real("duration_seconds"),
     status: jobStatusEnum("status").default("pending").notNull(),
+    summary: jsonb("summary").$type<CommitResult | null>(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     processedAt: timestamp("processed_at"),
   },
@@ -218,6 +220,16 @@ export const entityKnowledge = pgTable("entity_knowledge", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const chapters = pgTable("chapters", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  storyId: uuid("story_id")
+    .notNull()
+    .references(() => stories.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const scenes = pgTable("scenes", {
   id: uuid("id").defaultRandom().primaryKey(),
   storyId: uuid("story_id")
@@ -229,10 +241,14 @@ export const scenes = pgTable("scenes", {
   whenNormalized: jsonb("when_normalized").$type<NonNullable<TimelineRef["normalized"]>>(),
   summary: text("summary"),
   chapterNumber: integer("chapter_number"),
+  chapterId: uuid("chapter_id").references(() => chapters.id, { onDelete: "set null" }),
+  position: integer("position").notNull().default(0),
+  content: text("content"),
   eventIds: jsonb("event_ids").$type<string[]>().default([]),
   participantIds: jsonb("participant_ids").$type<string[]>().default([]),
   revision: integer("revision").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const plotThreads = pgTable("plot_threads", {

@@ -30,6 +30,36 @@ export interface ProcessTranscriptResult {
   chunks: ChunkTrace[];
 }
 
+// Folds a job's per-chunk CommitResults into a single aggregate summary. All
+// counters sum across chunks; revision reflects the final applied revision.
+export function aggregateCommitResults(results: CommitResult[]): CommitResult | null {
+  if (results.length === 0) return null;
+  const entitiesCreatedByType: Record<string, number> = {};
+  for (const result of results) {
+    for (const [type, count] of Object.entries(result.entitiesCreatedByType)) {
+      entitiesCreatedByType[type] = (entitiesCreatedByType[type] ?? 0) + count;
+    }
+  }
+  const last = results[results.length - 1];
+  return {
+    revision: last.revision,
+    entityTypesCreated: results.reduce((sum, r) => sum + r.entityTypesCreated, 0),
+    entitiesCreated: results.reduce((sum, r) => sum + r.entitiesCreated, 0),
+    entitiesUpdated: results.reduce((sum, r) => sum + r.entitiesUpdated, 0),
+    entitiesCreatedByType,
+    eventsAdded: results.reduce((sum, r) => sum + r.eventsAdded, 0),
+    factsAdded: results.reduce((sum, r) => sum + r.factsAdded, 0),
+    relationshipsAdded: results.reduce((sum, r) => sum + r.relationshipsAdded, 0),
+    knowledgeAdded: results.reduce((sum, r) => sum + r.knowledgeAdded, 0),
+    scenesAdded: results.reduce((sum, r) => sum + r.scenesAdded, 0),
+    plotThreadsUpdated: results.reduce((sum, r) => sum + r.plotThreadsUpdated, 0),
+    openQuestionsAdded: results.reduce((sum, r) => sum + r.openQuestionsAdded, 0),
+    openQuestionsResolved: results.reduce((sum, r) => sum + r.openQuestionsResolved, 0),
+    contradictionsFound: results.reduce((sum, r) => sum + r.contradictionsFound, 0),
+    factsSuperseded: results.reduce((sum, r) => sum + r.factsSuperseded, 0),
+  };
+}
+
 // T5.4 — the extraction agent. Dependencies are injected via the constructor
 // (the container binds this as TRANSCRIPT_PROCESSOR, resolving the AI SDK
 // model and story store), so process() only takes the job. Loads the story,

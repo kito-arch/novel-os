@@ -39,6 +39,7 @@ const stubLlm: LlmClient = {
 
 const stubStoryWorldStore: StoryWorldStore = {
   getWorld: async () => null,
+  updateStoryTitle: async () => {},
   commit: async () => ({
     revision: 1,
     entityTypesCreated: 0,
@@ -66,8 +67,18 @@ const stubStoryWorldStore: StoryWorldStore = {
   listEntities: async () => [],
   attachMedia: async () => randomUUID(),
   getMedia: async () => [],
+  removeMedia: async () => {},
   insertKnowledge: async () => randomUUID(),
   getKnowledge: async () => [],
+  listChapters: async () => [],
+  createChapter: async () => randomUUID(),
+  updateChapter: async () => {},
+  deleteChapter: async () => {},
+  listProseScenes: async () => [],
+  getProseScene: async () => null,
+  createProseScene: async () => randomUUID(),
+  updateProseScene: async () => {},
+  deleteProseScene: async () => {},
 };
 
 const stubTranscriptStore: TranscriptStore = {

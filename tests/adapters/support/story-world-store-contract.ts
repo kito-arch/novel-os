@@ -267,6 +267,12 @@ export function runStoryWorldStoreContract(
       expect(media[0].url).toBe("s3://bucket/relentless.jpg");
       expect((await store.getWorld(storyId))?.entities[0].media).toHaveLength(1);
 
+      await store.attachMedia(relentless.id, { url: "s3://bucket/other.jpg", role: "gallery", caption: null });
+      await store.removeMedia(relentless.id, mediaId);
+      const remaining = await store.getMedia(relentless.id);
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].id).not.toBe(mediaId);
+
       const knowledgeId = await store.insertKnowledge(storyId, {
         subjectEntityId: relentless.id,
         factId: null,

@@ -1,3 +1,5 @@
+import type { CommitResult } from "../domain/commits";
+
 export type DictationStatus = "pending" | "processing" | "completed" | "failed";
 
 export interface Dictation {
@@ -10,6 +12,7 @@ export interface Dictation {
   wordCount: number | null;
   durationSeconds: number | null;
   status: DictationStatus;
+  summary: CommitResult | null;
   createdAt: Date;
   processedAt: Date | null;
 }
@@ -24,6 +27,7 @@ export interface TranscriptStore {
     wordCount?: number;
     durationSeconds?: number;
     status: DictationStatus;
+    summary?: CommitResult | null;
   }): Promise<string>;
 
   getDictation(dictationId: string): Promise<Dictation | null>;
@@ -46,6 +50,7 @@ export interface TranscriptStore {
       wordCount?: number;
       durationSeconds?: number;
       status?: DictationStatus;
+      summary?: CommitResult | null;
       processedAt?: Date;
     },
   ): Promise<void>;

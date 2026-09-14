@@ -448,3 +448,207 @@ tests/container-memory.test.ts  # T11 wiring test
 ### Next up
 
 Phase 12 — API routes (T12.1–T12.10): `POST /api/dictations` (multipart upload → `saveDictation` + `submitTranscription` + `providerJobId`), AssemblyAI webhook route (verify echoed `WEBHOOK_SECRET`, resolve `transcript_id` → dictation, queue extraction), story/entity query+edit routes, dictation status endpoint.
+
+---
+
+## Phase 12: API Routes — COMPLETE (T12.1–T12.10)
+
+Ten API routes behind three shared helpers. The app's runtime container is resolved through `resolveContainer()`; uniform `{ error }` JSON errors; the mock auth seam is the `x-user-id` header (`userIdFrom`). Dictation upload persists `storyId` + `userId` on the DB row and keys the webhook correlation solely by `providerJobId` (AssemblyAI `transcript_id`), never by URL/body identity — an unknown `transcript_id` → 404, missing/wrong `WEBHOOK_SECRET` → 401.
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — 197 tests across 24 files, all pass. New: `tests/routes/dictations.test.ts`, `tests/routes/stories.test.ts`, `tests/routes/reasoning.test.ts`, `tests/routes/fixtures.ts`.
+
+### Files created/changed
+
+```
+src/server/http.ts               # jsonError(status, message) → { error }; userIdFrom(request) → x-user-id header
+src/server/app-container.ts      # resolveContainer(): lazy singleton of buildContainer()
+src/server/media-storage.ts      # MediaStorage port + defaultMediaStorage (node_modules/.media, uuid names)
+src/app/api/dictations/route.ts  # T12.1 multipart upload → saveDictation + submitTranscription + clean webhook URL
+src/app/api/dictations/[id]/route.ts      # T12.2 status + CommitResult summary
+src/app/api/stories/[id]/route.ts         # T12.3 full StoryWorld
+src/app/api/stories/[id]/entities/[entityId]/route.ts  # T12.4 PATCH (attributes/aliases/media, validate + commit)
+src/app/api/stories/[id]/ask/route.ts              # T12.5 askStory → { answer }
+src/app/api/stories/[id]/analyze/route.ts          # T12.6 checkContinuity → { reports }
+src/app/api/stories/[id]/knowledge/route.ts        # T12.7 doesEntityKnow → { status, context }
+src/app/api/stories/[id]/entity-types/route.ts     # T12.8 user-created types (upsertEntityType, origin "user")
+src/app/api/stories/[id]/entities/[entityId]/media/route.ts  # T12.9 portrait/gallery upload, abstract → 400
+src/app/api/hooks/stt-callback/route.ts            # T12.10 webhook: secret check → findDictationByProviderJobId
+                                                   #   → getTranscript → update status → enqueue extraction
+src/container/transcript-store.ts # summary: string | null on Dictation (writer-owned aggregate preview)
+src/container/story-world-store.ts# removeMedia(entityId, mediaId) for T12.4/T12.9 media sync
+src/adapters/postgres/transcript-store.ts  # summary column write + story-shell insert on dictation save
+src/adapters/postgres/story-world-store.ts# removeMedia SQL
+tests/routes/fixtures.ts         # seeded story + container per test file
+tests/routes/{dictations,stories,reasoning}.test.ts
+```
+
+### Decisions / deviations
+
+- **Segment params are named after the folder, not the concept** — Next 16's generated route types require `[id]` → `params.id` even under `/stories/[id]`; the entity routes destructure `{ id: storyId, entityId }`. Using `storyId` as the key broke `next build` type validation.
+- **Webhook identity is provider-job-id only** — the callback never trusts query params or body for user/story; `findDictationByProviderJobId(transcript_id)` resolves ownership from the DB row.
+- **Media storage is a seam** — routes take an injectable `MediaStorage`; the default writes to `node_modules/.media`, and tests stub it to avoid files.
+- **Summary lives on the dictation row** — workers write the aggregated `CommitResult` summary when extraction finishes so the status endpoint can render "what changed" without re-reading the whole world.
+
+## Phase 13: UI — MVP Screens — COMPLETE (T13.1–T13.8)
+
+A `(studio)` route group with a persistent left rail (Manuscript / Talk, Story, Ask, Continuity, plus dynamic entity sections derived from each story's registry) and the eight MVP screens. The story id is a per-browser value persisted in localStorage via `useSyncExternalStore` (so it survives reloads and stays SSR-hydration-safe); every API call goes through `src/ui/api-client.ts`, which adds the `x-user-id` mock-auth header.
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors (react-hooks + react-compiler rules clean).
+- `npm test` — 197 tests, all pass.
+- `npm run build` — production build succeeds; static `/`, `/talk`, `/story`, `/ask`, `/debug`; dynamic `/character/[id]`, `/scene/[id]`, `/api/*` routes.
+
+### Files created/changed
+
+```
+src/app/(studio)/layout.tsx          # StoryProvider + Sidebar + main content column
+src/ui/sidebar.tsx                   # T13.1 left rail, mobile hamburger, registry-derived sections
+src/ui/story-context.tsx             # useStoryId: localStorage-persisted story via useSyncExternalStore
+src/ui/api-client.ts                 # studioHeaders (x-user-id) + fetchJson; STUDIO_USER const
+src/ui/mic-capture.tsx               # T13.2 MediaRecorder capture + file-picker fallback, stop() kills the track
+src/ui/result-card.tsx               # T13.3 status pill + transcript + CommitResult summary; error/retry states
+src/ui/talk-screen.tsx               # T13.2/3 upload + 3s status polling + reset
+src/ui/story-screen.tsx              # T13.4 world fetch + entity list/detail split, handles 404 (no story yet)
+src/ui/entity-list.tsx               # type-filter pills + per-type entity links
+src/ui/entity-detail.tsx             # inline-edit attributes → PATCH, media rows via next/image
+src/ui/character-screen.tsx          # T13.5 overview/edit tabs, baseKind guard
+src/ui/character-sheet.tsx           # portrait, profile attrs, relationships, facts, scene count
+src/ui/scene-card.tsx                # T13.6 chapter/when/setting/participants/summary
+src/ui/scene-detail-screen.tsx       # scene detail + linked entities + events
+src/ui/scene-screen.tsx              # scene list (timeline order), links → /scene/[id]
+src/ui/ask-chat.tsx                  # T13.7 ask history + POST /api/stories/[id]/ask
+src/ui/debug-reports.tsx             # T13.8 contradiction scan + scenes timeline
+src/app/(studio)/talk/page.tsx       # Talk
+src/app/(studio)/story/page.tsx      # Story (Suspense for useSearchParams)
+src/app/(studio)/ask/page.tsx        # Ask
+src/app/(studio)/debug/page.tsx      # Continuity
+src/app/(studio)/character/[id]/page.tsx  # async page, Promise params (Next 16)
+src/app/(studio)/scene/[id]/page.tsx      # async page, Promise params (Next 16)
+src/app/page.tsx                     # redirect("/talk")
+```
+
+### Decisions / deviations
+
+- **Story id is client-side for the MVP** — with no auth/list-stories API yet, the studio keys off a localStorage story id (auto-generated on first visit). Dictation upload creates the story shell, so the first take bootstraps an empty bible. A real "projects" UI replaces this later.
+- **React Compiler lint enforced** — client state that used to be set synchronously in effects (localStorage hydration, report "loading") was rewritten with `useSyncExternalStore` or derived render state to satisfy `react-hooks/set-state-in-effect`.
+- **`next/image` with `unoptimized`** — media URLs are arbitrary user-supplied outputs, so the optimizer is bypassed rather than maintaining `remotePatterns`; sizing is fixed via width/height.
+
+### Next up
+
+Phase 14 — Tests & Verification (T14.1–T14.5): end-to-end integration test over the container, Postgres adapter contract suites, cost-guard test, contradiction edge cases, and lint/typecheck gate.
+
+---
+
+## Phase 16: Manual Authoring & Direct Entity Creation — COMPLETE (T16.1–T16.5)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — all pass.
+
+### Files created/changed
+
+```
+src/app/api/stories/[id]/extract-text/route.ts              # T16.1 text → extraction (same pipeline as audio)
+src/app/api/stories/[id]/entities/route.ts                  # T16.2 POST direct entity creation; auto-registers builtins
+src/app/api/stories/[id]/entities/[entityId]/references/route.ts  # entity backlinks (scenes that @-mention entity)
+src/ui/entity-create-modal.tsx                              # T16.4 modal: type selector + name + aliases + dynamic attrs
+src/ui/media-upload.tsx                                     # T16.5 portrait/gallery upload with remove button
+src/ui/entity-detail.tsx                                    # media section for supportsMedia types
+src/ui/character-screen.tsx                                 # portrait upload + gallery in overview tab
+```
+
+### Decisions / deviations
+
+- **Multi-valued attribute coercion:** form inputs store `multi: true` values as comma-separated strings; the `save()` function in `EntityDetail` coerces them to arrays before sending to the API to satisfy `validateAttributes`.
+
+---
+
+## Phase 17: Multi-Story Dashboard, Chapters & Prose Editor, @mention System — COMPLETE
+
+New capabilities added: multi-story routing, per-story layouts with chapters and prose scenes, a prose editor with `@[Name](id)` mention syntax, entity backlinks, a unified entity page for all entity types, entity drawer, chapter create modal, Narrate widget, and story title inline editing with localStorage auto-sync.
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — all pass.
+
+### Files created/changed
+
+**Routing & Layout**
+```
+src/app/page.tsx                                      # multi-story dashboard (story list + create form)
+src/app/story/[storyId]/layout.tsx                   # per-story layout with sidebar
+src/app/story/[storyId]/page.tsx                     # story bible at /story/[storyId]
+src/app/story/[storyId]/talk/page.tsx                # narrate screen per-story
+src/app/story/[storyId]/scene/[id]/page.tsx          # scene prose editor per-story
+src/app/story/[storyId]/character/[id]/page.tsx      # character page per-story
+src/app/story/[storyId]/entity/[entityId]/page.tsx   # unified entity page for any type
+```
+
+**Chapters & Prose Scenes**
+```
+drizzle/schema.ts                                         # chapters table + scenes.(content|chapter_id|position)
+drizzle/migrations/0002_whole_clint_barton.sql            # scenes.content column
+drizzle/migrations/0003_chapters-and-scene-content.sql    # chapters table + scenes FK/position
+src/domain/chapters.ts                                    # Chapter domain type
+src/domain/scenes.ts                                      # extended: content, chapterId, position
+src/container/story-world-store.ts                        # +listChapters/createChapter/updateChapter/deleteChapter,
+                                                          #  listProseScenes/getProseScene/createProseScene/
+                                                          #  updateProseScene/deleteProseScene, updateStoryTitle
+src/adapters/postgres/story-world-store.ts                # SQL implementations for all new methods
+src/adapters/mock/story-world-store.ts                    # in-memory implementations
+src/app/api/stories/[id]/route.ts                         # +PATCH handler for story title update
+src/app/api/stories/[id]/chapters/route.ts                # GET list + POST create
+src/app/api/stories/[id]/chapters/[chapterId]/route.ts    # PATCH + DELETE
+src/app/api/stories/[id]/chapters/[chapterId]/scenes/route.ts  # POST create scene in chapter
+src/app/api/stories/[id]/scenes/[sceneId]/route.ts        # GET + PATCH + DELETE
+```
+
+**@Mention System & Prose Editor**
+```
+src/ui/mention-input.tsx       # contenteditable editor with @ autocomplete dropdown + HoverCard on hover
+src/ui/scene-renderer.tsx      # renders @[Name](id) syntax as clickable mention chips (span, not Link)
+src/ui/scene-detail-screen.tsx # prose editor: 1.5s debounce autosave, title autosave (1s),
+                               #   onEntityClick → entity drawer, fires novel-os:world-changed on title change
+```
+
+**Entity Drawer & Unified Entity Pages**
+```
+src/ui/entity-drawer.tsx      # right-side slide-in (w-80, z-50); Escape/outside click to close
+src/ui/entity-screen.tsx      # unified Overview/Edit/References tabs for any entity type
+src/ui/entity-references.tsx  # lists prose scenes that @-mention the entity
+```
+
+**Dashboard, Sidebar & UX**
+```
+src/ui/dashboard.tsx             # multi-story list + create; PATCHes title to DB before navigation
+src/ui/sidebar.tsx               # chapters/scenes tree; ChapterCreateModal; novel-os:world-changed listener
+src/ui/chapter-create-modal.tsx  # proper modal for chapter title input (no window.prompt())
+src/ui/entity-list.tsx           # all entity types in filter pills; unified /entity/[id] links
+src/ui/story-screen.tsx          # inline title editing (1s debounce); localStorage auto-sync;
+                                 #   "Narrate" copy (was "Talk"); Rules of Hooks moved before early returns
+```
+
+**Mock Adapters (relocated to src)**
+```
+src/adapters/mock/               # clock, job-queue, llm, sdk-model, story-world-store, stt, transcript-store
+src/adapters/mock/container.ts   # mock container builder (moved from tests/mocks/memory-container.ts)
+src/adapters/mock/index.ts       # barrel
+```
+
+### Decisions / deviations
+
+- **Mock adapters in `src/adapters/mock/`:** dev server needs injectable mocks without importing from `tests/`; moving them to src makes the dependency direction valid. The previous location (`tests/mocks/`) was appropriate before the dev server needed them.
+- **Story title sync:** `Dashboard.create` PATCHes the title before `router.push()` so the DB row is never "Untitled story" on first load; a `useEffect` auto-sync in `StoryScreen` patches any existing stories that still carry the placeholder by reading the localStorage entry.
+- **Prose scenes vs. extraction scenes:** the existing `Scene` domain type (LLM-extracted, with `settingId`, `participantIds`, etc.) is preserved; prose scenes are a separate authoring layer with a simpler schema (title + markdown-style content stored as the `@[Name](id)` format).
+- **Entity drawer vs. full navigation:** clicking an `@[Name]` chip opens the lightweight drawer for quick lookup; the full entity page is still accessible via "Open full page →" in the drawer footer.
+- **`novel-os:world-changed` event bus:** cross-component refresh (sidebar ↔ scene editor ↔ story bible) uses a `CustomEvent` dispatched on `window`, keyed by `storyId`; avoids prop-drilling refresh callbacks across the layout boundary.

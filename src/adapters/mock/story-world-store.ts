@@ -4,12 +4,14 @@ import type {
   EventQuery,
   StoryWorldStore,
 } from "@/container/story-world-store";
+import type { Chapter } from "@/domain/chapters";
 import type { Commit, CommitResult } from "@/domain/commits";
 import { applyCommit } from "@/domain/commits";
 import type { Entity, MediaRef } from "@/domain/entities";
 import type { EntityType } from "@/domain/entity-types";
 import type { StoryEvent } from "@/domain/events";
 import type { EntityKnowledge } from "@/domain/knowledge";
+import type { Scene } from "@/domain/scenes";
 import type { StoryWorld } from "@/domain/story-world";
 
 function identity(): string {
@@ -34,6 +36,8 @@ export class MockStoryWorldStore implements StoryWorldStore {
   private readonly revisions = new Map<string, Map<number, StoryWorld>>();
   private readonly mediaByEntity = new Map<string, MediaRef[]>();
   private readonly knowledgeBySubject = new Map<string, EntityKnowledge[]>();
+  private readonly chaptersStore = new Map<string, Chapter[]>();
+  private readonly proseScenesStore = new Map<string, Scene[]>();
 
   constructor(private readonly options: MockStoryWorldStoreOptions = {}) {}
 
@@ -143,6 +147,11 @@ export class MockStoryWorldStore implements StoryWorldStore {
     return snapshot ? this.finalize(snapshot) : null;
   }
 
+  async updateStoryTitle(storyId: string, title: string): Promise<void> {
+    const world = this.worlds.get(storyId) ?? this.createWorld(storyId);
+    this.worlds.set(storyId, { ...world, title });
+  }
+
   async upsertEntityType(
     storyId: string,
     def: Omit<EntityType, "id" | "createdAt">,
@@ -235,6 +244,16 @@ export class MockStoryWorldStore implements StoryWorldStore {
     return this.mediaByEntity.get(entityId) ?? [];
   }
 
+  async removeMedia(entityId: string, mediaId: string): Promise<void> {
+    const rows = this.mediaByEntity.get(entityId);
+    if (!rows) throw new Error(`media "${mediaId}" not found on entity "${entityId}"`);
+    const next = rows.filter((row) => row.id !== mediaId);
+    if (next.length === rows.length) {
+      throw new Error(`media "${mediaId}" not found on entity "${entityId}"`);
+    }
+    this.mediaByEntity.set(entityId, next);
+  }
+
   async insertKnowledge(
     storyId: string,
     knowledge: Omit<EntityKnowledge, "id" | "createdAt">,
@@ -256,6 +275,76 @@ export class MockStoryWorldStore implements StoryWorldStore {
 
   async getKnowledge(storyId: string, subjectEntityId: string): Promise<EntityKnowledge[]> {
     return this.knowledgeBySubject.get(subjectEntityId) ?? [];
+  }
+
+  async listChapters(storyId: string): Promise<Chapter[]> {
+    return (this.chaptersStore.get(storyId) ?? []).sort((a, b) => a.position - b.position);
+  }
+
+  async createChapter(storyId: string, data: { title: string; position: number }): Promise<string> {
+    const id = randomUUID();
+    const chapter: Chapter = { id, storyId, title: data.title, position: data.position, createdAt: this.now() };
+    const existing = this.chaptersStore.get(storyId) ?? [];
+    this.chaptersStore.set(storyId, [...existing, chapter]);
+    return id;
+  }
+
+  async updateChapter(storyId: string, chapterId: string, patch: { title?: string; position?: number }): Promise<void> {
+    const list = this.chaptersStore.get(storyId) ?? [];
+    this.chaptersStore.set(storyId, list.map((c) => c.id === chapterId ? { ...c, ...patch } : c));
+  }
+
+  async deleteChapter(storyId: string, chapterId: string): Promise<void> {
+    const list = this.chaptersStore.get(storyId) ?? [];
+    this.chaptersStore.set(storyId, list.filter((c) => c.id !== chapterId));
+  }
+
+  async listProseScenes(storyId: string, chapterId?: string): Promise<Scene[]> {
+    const all = this.proseScenesStore.get(storyId) ?? [];
+    const filtered = chapterId ? all.filter((s) => s.chapterId === chapterId) : all;
+    return filtered.sort((a, b) => a.position - b.position);
+  }
+
+  async getProseScene(storyId: string, sceneId: string): Promise<Scene | null> {
+    const all = this.proseScenesStore.get(storyId) ?? [];
+    return all.find((s) => s.id === sceneId) ?? null;
+  }
+
+  async createProseScene(storyId: string, data: { chapterId: string; title?: string; content?: string; position: number }): Promise<string> {
+    const id = randomUUID();
+    const now = this.now();
+    const scene: Scene = {
+      id,
+      storyId,
+      chapterId: data.chapterId,
+      title: data.title ?? null,
+      content: data.content ?? null,
+      position: data.position,
+      settingId: null,
+      when: null,
+      summary: null,
+      chapterNumber: null,
+      eventIds: [],
+      participantIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const existing = this.proseScenesStore.get(storyId) ?? [];
+    this.proseScenesStore.set(storyId, [...existing, scene]);
+    return id;
+  }
+
+  async updateProseScene(storyId: string, sceneId: string, patch: { title?: string; content?: string; position?: number }): Promise<void> {
+    const list = this.proseScenesStore.get(storyId) ?? [];
+    this.proseScenesStore.set(
+      storyId,
+      list.map((s) => s.id === sceneId ? { ...s, ...patch, updatedAt: this.now() } : s),
+    );
+  }
+
+  async deleteProseScene(storyId: string, sceneId: string): Promise<void> {
+    const list = this.proseScenesStore.get(storyId) ?? [];
+    this.proseScenesStore.set(storyId, list.filter((s) => s.id !== sceneId));
   }
 }
 

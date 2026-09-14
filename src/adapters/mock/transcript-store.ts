@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Clock } from "@/container/clock";
 import type { Dictation, DictationStatus, TranscriptStore } from "@/container/transcript-store";
+import type { CommitResult } from "@/domain/commits";
 
 // In-memory TranscriptStore for tests/dev. Keyed by dictation id; the
 // provider-job-id lookup is a linear scan (small scale, dev only).
@@ -27,6 +28,7 @@ export class MockTranscriptStore implements TranscriptStore {
     wordCount?: number;
     durationSeconds?: number;
     status: DictationStatus;
+    summary?: CommitResult | null;
   }): Promise<string> {
     const id = randomUUID();
     const row: Dictation = {
@@ -39,6 +41,7 @@ export class MockTranscriptStore implements TranscriptStore {
       wordCount: params.wordCount ?? null,
       durationSeconds: params.durationSeconds ?? null,
       status: params.status,
+      summary: params.summary ?? null,
       createdAt: this.now(),
       processedAt: null,
     };
@@ -72,6 +75,7 @@ export class MockTranscriptStore implements TranscriptStore {
       wordCount?: number;
       durationSeconds?: number;
       status?: DictationStatus;
+      summary?: CommitResult | null;
       processedAt?: Date;
     },
   ): Promise<void> {
@@ -85,6 +89,7 @@ export class MockTranscriptStore implements TranscriptStore {
       wordCount: updates.wordCount ?? row.wordCount,
       durationSeconds: updates.durationSeconds ?? row.durationSeconds,
       status: updates.status ?? row.status,
+      summary: updates.summary ?? row.summary,
       processedAt: updates.processedAt ?? row.processedAt,
     });
   }

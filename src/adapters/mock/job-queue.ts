@@ -18,6 +18,8 @@ export class MockJobQueue implements JobQueue {
   private readonly completedHandlers = new Map<string, CompletedHandler>();
   private readonly failedHandlers = new Map<string, FailedHandler>();
   private readonly jobs = new Map<string, QueuedJob>();
+  // Appends every enqueue so tests can assert extraction jobs' payloads.
+  readonly enqueued: Array<{ jobName: string; data: unknown }> = [];
 
   onJobCompleted(jobName: string, handler: CompletedHandler): void {
     this.completedHandlers.set(jobName, handler);
@@ -30,6 +32,7 @@ export class MockJobQueue implements JobQueue {
   async enqueue<T>(jobName: string, data: T): Promise<{ jobId: string }> {
     const jobId = randomUUID();
     this.jobs.set(jobId, { jobName, data, status: "queued" });
+    this.enqueued.push({ jobName, data });
 
     const handler = this.completedHandlers.get(jobName);
     if (!handler) return { jobId };
