@@ -545,6 +545,71 @@ Phase 14 — Tests & Verification (T14.1–T14.5): end-to-end integration test o
 
 ---
 
+## Phase 14: Tests & Verification — COMPLETE (T14.1–T14.5)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — 212 tests across 27 files, all pass.
+
+### Files created/changed
+
+```
+tests/services/llm-agent/tools/supersede.test.ts   # T14.1 contradiction/supersede edge cases (8 tests)
+tests/integration/full-pipeline.test.ts             # T14.2 full dictation pipeline + write-tab bypass + empty no-op
+tests/services/context/cost-guard.test.ts           # T14.3 TOKEN_CAP (4000) held for maximally dense worlds
+tests/adapters/support/story-world-store-contract.ts # T14.4 reusable Postgres adapter contract suite
+```
+
+### Decisions / deviations
+
+- **Cost guard:** `buildContextFromWorld` enforces caps internally (`MAX_MENTION_MATCHES`, `MAX_RELATIONSHIPS`, etc.) that guarantee `tokenEstimate ≤ 4000`; the test builds a 100-entity / 200-fact / 100-relationship world and asserts the estimate stays within the cap.
+- **Full pipeline test:** uses `transcriptStore.saveDictation()` return value as the dictation ID (not a pre-generated UUID) to ensure the stored row ID is used.
+- **Supersede tests:** cover duplicate guard from world, in-session idempotency, contradiction auto-detection, no duplicate contradiction records, explicit `supersede_fact`, confidence strata preserved, commit supersedes old fact, and cross-chapter anachronism.
+
+---
+
+## Phase 15: Polish & Deployment — COMPLETE (T15.1–T15.4)
+
+### Acceptance verification (all pass)
+
+- `npm run typecheck` — 0 errors.
+- `npm run lint` — 0 errors.
+- `npm test` — all pass.
+- `docker compose up --build` — db + migrate + app all healthy.
+
+### Files created/changed
+
+```
+src/ui/loading.tsx                  # T15.1 Spinner, PageSpinner, InlineError, EmptyState
+src/ui/toast.tsx                    # T15.1 ToastProvider, useToast, three kinds, auto-dismiss 4s
+src/ui/error-boundary.tsx           # T15.1 React error boundary (class component)
+src/app/layout.tsx                  # T15.1 title "Novel OS", wrapped body in ToastProvider
+src/app/story/[storyId]/layout.tsx  # T15.1 ErrorBoundary wrapper, refined padding
+src/ui/dashboard.tsx                # T15.1 useToast errors, PageSpinner, EmptyState, Spinner on button
+src/ui/media-upload.tsx             # T15.1 useToast errors, Spinner while uploading
+src/ui/story-screen.tsx             # T15.1 PageSpinner + InlineError
+src/ui/sidebar.tsx                  # T15.1 mobile backdrop overlay
+src/config/index.ts                 # T15.2 runtimeSchema (strict DATABASE_URL), validateRuntimeEnv
+src/instrumentation.ts              # T15.2 register() calls validateRuntimeEnv — fails fast at startup
+src/server/app-container.ts         # T15.2 removed silent fallbacks, calls loadConfig directly
+Dockerfile                          # T15.3 multi-stage Node 24 Alpine, standalone output, non-root user
+docker-compose.yml                  # T15.3 db + migrate + app with health checks and dependency order
+.env.production.example             # T15.3 documented production env vars
+next.config.ts                      # T15.3 output: "standalone"
+scripts/seed.ts                     # T15.3 dev seed script (sample story + character)
+README.md                           # T15.4 prerequisites, local setup, env vars, docker, architecture
+```
+
+### Decisions / deviations
+
+- **`instrumentation.ts` for startup validation:** Next.js `register()` runs once before the first request; it's the canonical hook for early server-side checks without blocking the edge runtime.
+- **`runtimeSchema` separate from `configSchema`:** tests import `loadConfig` (which uses the lenient schema without requiring `DATABASE_URL`); production only uses `validateRuntimeEnv` (strict schema) via `instrumentation.ts`.
+- **Docker non-root user:** `nextjs` (uid 1001) with `nodejs` group follows Next.js standalone output conventions.
+
+---
+
 ## Phase 16: Manual Authoring & Direct Entity Creation — COMPLETE (T16.1–T16.5)
 
 ### Acceptance verification (all pass)

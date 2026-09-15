@@ -1,36 +1,155 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Novel OS
 
-## Getting Started
+A voice-first story-writing assistant. Dictate scenes, extract characters and facts automatically, then browse and edit your story world through an AI-powered narrative layer.
 
-First, run the development server:
+---
+
+## Prerequisites
+
+- **Node.js 24+** (`node -v`)
+- **PostgreSQL 16+** (local or Docker)
+- **OpenAI API key** (or another LLM provider configured in env)
+- **AssemblyAI API key** (for voice dictation — optional in dev with mock mode)
+- **AWS credentials** (for SQS async processing — optional in dev)
+
+---
+
+## Local development
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set at minimum:
+
+```
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/novelos
+LLM_PROVIDER=openai
+LLM_API_KEY=sk-...
+```
+
+Leave `STT_PROVIDER=mock` to skip AssemblyAI and use the built-in mock for dictation in dev.
+
+### 3. Create the database
+
+```bash
+createdb novelos           # or use your PostgreSQL client
+npm run db:migrate         # applies all Drizzle migrations
+```
+
+Optional — seed a sample story and character:
+
+```bash
+DATABASE_URL=postgres://... npx tsx scripts/seed.ts
+```
+
+### 4. Run the dev server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Environment variables
 
-## Learn More
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DATABASE_URL` | Yes (prod) | — | PostgreSQL connection string |
+| `LLM_PROVIDER` | Yes | `openai` | LLM backend (`openai`) |
+| `LLM_API_KEY` | Yes (real provider) | — | API key for the LLM provider |
+| `LLM_CHEAP_MODEL` | No | `gpt-4o-mini` | Model for lightweight tasks |
+| `LLM_STANDARD_MODEL` | No | `gpt-4o` | Model for standard agent tasks |
+| `LLM_BEST_MODEL` | No | `gpt-4o` | Model for high-accuracy tasks |
+| `STT_PROVIDER` | No | `mock` | Speech-to-text backend (`assemblyai` or `mock`) |
+| `STT_API_KEY` | If STT≠mock | — | AssemblyAI API key |
+| `AWS_REGION` | If SQS used | `us-east-1` | AWS region for the SQS queue |
+| `SQS_QUEUE_URL` | If STT≠mock | — | Full SQS queue URL |
+| `WEBHOOK_SECRET` | If STT≠mock | — | Shared secret for AssemblyAI callback auth |
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Running tests
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm test               # run all tests once
+npm run test:watch     # watch mode
+```
 
-## Deploy on Vercel
+Tests use in-memory mock adapters and never require a running database or API keys.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Type-checking and linting
+
+```bash
+npm run typecheck
+npm run lint
+```
+
+---
+
+## Docker deployment
+
+Copy and fill in the production env file:
+
+```bash
+cp .env.production.example .env.production
+```
+
+Start everything (Postgres + migrations + app):
+
+```bash
+docker compose up --build
+```
+
+The app runs on port 3000. The `migrate` service runs once before the app starts. See `docker-compose.yml` for service details and `.env.production.example` for all required variables.
+
+---
+
+## Architecture overview
+
+```
+src/
+  config/          # Zod-validated env config, startup validation
+  domain/          # Pure TypeScript types — entities, facts, scenes, chapters
+  adapters/
+    postgres/      # Drizzle ORM implementations
+    mock/          # In-memory adapters for tests and local dev
+  services/        # Application logic — agent loop, context builder, extraction
+  container/       # ioctopus IoC composition root; port contracts (tokens)
+  server/          # resolveContainer — builds and caches the DI container
+  app/             # Next.js App Router pages and API routes
+  ui/              # React components
+
+drizzle/
+  schema.ts        # Drizzle table definitions
+  migrations/      # SQL migration files
+
+tests/
+  domain/          # Pure domain type unit tests
+  services/        # Service unit tests (mock adapters)
+  adapters/        # Adapter contract suites
+  integration/     # Full pipeline integration tests
+```
+
+### Request flow
+
+1. Browser uploads audio → `POST /api/dictations`
+2. API saves dictation, submits to AssemblyAI, enqueues SQS job
+3. AssemblyAI POSTs transcript to `/api/webhook/assemblyai`
+4. SQS worker calls `processTranscription`:
+   - Retrieves transcript + story world context
+   - Calls LLM agent loop with extraction tools
+   - Commits extracted entities/facts to the story world store
+5. Client polls `/api/dictations/:id/status` and reflects updates in the UI
