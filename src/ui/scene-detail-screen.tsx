@@ -56,7 +56,6 @@ export default function SceneDetailScreen({
         setScene(s);
         setTitle(s.title ?? "");
         setContent(s.content ?? "");
-        lastSavedTitleRef.current = s.title ?? "";
         setEntities(world.entities);
         setEntityTypes(world.entityTypes);
       })
@@ -64,8 +63,6 @@ export default function SceneDetailScreen({
       .finally(() => { if (!ignore) setLoading(false); });
     return () => { ignore = true; };
   }, [storyId, sceneId]);
-
-  const lastSavedTitleRef = useRef<string | null>(null);
 
   const save = useCallback(
     async (nextTitle: string, nextContent: string) => {
@@ -80,12 +77,9 @@ export default function SceneDetailScreen({
           },
         );
         setSaveState("saved");
-        if (nextTitle !== lastSavedTitleRef.current) {
-          lastSavedTitleRef.current = nextTitle;
-          window.dispatchEvent(
-            new CustomEvent("novel-os:world-changed", { detail: { storyId } }),
-          );
-        }
+        window.dispatchEvent(
+          new CustomEvent("novel-os:world-changed", { detail: { storyId } }),
+        );
       } catch {
         setSaveState("error");
       }

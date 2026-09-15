@@ -24,7 +24,7 @@ import type { OpenQuestion, PlotThread } from "@/domain/plot-threads";
 import type { Fact, Provenance } from "@/domain/provenance";
 import type { Relationship } from "@/domain/relationships";
 import type { Scene } from "@/domain/scenes";
-import type { StoryWorld } from "@/domain/story-world";
+import type { StoryMeta, StoryWorld } from "@/domain/story-world";
 import * as schema from "../../../drizzle/schema";
 import {
   chapters,
@@ -418,6 +418,22 @@ export class PostgresStoryWorldStore implements StoryWorldStore {
 
   async byRevision(storyId: string, revision: number): Promise<StoryWorld | null> {
     return this.readWorld(storyId, revision);
+  }
+
+  async listStories(ownerId: string): Promise<StoryMeta[]> {
+    const rows = await this.db
+      .select({ id: stories.id, title: stories.title, createdAt: stories.createdAt })
+      .from(stories)
+      .where(eq(stories.ownerId, ownerId))
+      .orderBy(sql`${stories.createdAt} DESC`);
+    return rows.map((row) => ({ id: row.id, title: row.title, createdAt: row.createdAt }));
+  }
+
+  async createStory(id: string, data: { title: string; ownerId: string }): Promise<void> {
+    await this.db
+      .insert(stories)
+      .values({ id, title: data.title, ownerId: data.ownerId, updatedAt: this.now() })
+      .onConflictDoNothing();
   }
 
   async updateStoryTitle(storyId: string, title: string): Promise<void> {

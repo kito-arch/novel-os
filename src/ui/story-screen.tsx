@@ -58,30 +58,6 @@ export default function StoryScreen({ storyId }: { storyId: string }) {
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const titleSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Auto-sync: if the DB still has the placeholder title, pull the real one
-  // from localStorage (set by the dashboard when the story was created).
-  useEffect(() => {
-    if (state.kind !== "loaded") return;
-    if (state.world.title !== "Untitled story") return;
-    try {
-      const raw = window.localStorage.getItem("novel-os:stories");
-      if (!raw) return;
-      const entries = JSON.parse(raw) as Array<{ id: string; title: string }>;
-      const match = entries.find((e) => e.id === storyId);
-      if (!match || !match.title.trim() || match.title === "Untitled story") return;
-      // Persist the real title to the DB and refresh.
-      fetchJson(`/api/stories/${encodeURIComponent(storyId)}`, {
-        method: "PATCH",
-        headers: studioHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ title: match.title }),
-      }).then(() => {
-        reload();
-        window.dispatchEvent(new CustomEvent("novel-os:world-changed", { detail: { storyId } }));
-      }).catch(() => {});
-    } catch {
-      // localStorage unavailable or parse error — ignore
-    }
-  }, [state, storyId, reload]);
 
   const saveTitle = useCallback(
     async (next: string) => {

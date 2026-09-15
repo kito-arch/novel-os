@@ -1,9 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useState, useSyncExternalStore } from "react";
-
-const STORIES_KEY = "novel-os:stories";
+import { useCallback, useEffect, useState } from "react";
+import { STUDIO_USER } from "@/ui/api-client";
 
 export interface StoryEntry {
   id: string;
@@ -11,53 +10,11 @@ export interface StoryEntry {
   createdAt: string;
 }
 
-const listeners = new Set<() => void>();
-const SERVER_SNAPSHOT: StoryEntry[] = [];
-
-function subscribe(onStoreChange: () => void): () => void {
-  listeners.add(onStoreChange);
-  return () => {
-    listeners.delete(onStoreChange);
-  };
-}
-
-// useSyncExternalStore requires getSnapshot to be referentially stable between
-// changes. Rather than re-parse localStorage (a new array + new objects every
-// call, which React flags as an uncached snapshot and can loop), cache the
-// parsed value and only rebuild it when the raw stored string actually changes.
-let cachedRaw: string | null = null;
-let cachedStories: StoryEntry[] = SERVER_SNAPSHOT;
-
-function updateCacheFromRaw(raw: string | null): StoryEntry[] {
-  cachedRaw = raw;
-  if (raw === null) {
-    cachedStories = [];
-    return cachedStories;
-  }
-  try {
-    cachedStories = JSON.parse(raw) as StoryEntry[];
-  } catch {
-    cachedStories = [];
-  }
-  return cachedStories;
-}
-
-function snapshotStories(): StoryEntry[] {
-  if (typeof window === "undefined") return SERVER_SNAPSHOT;
-  let raw: string | null = null;
-  try {
-    raw = window.localStorage.getItem(STORIES_KEY);
-  } catch {
-    return cachedStories;
-  }
-  return raw === cachedRaw ? cachedStories : updateCacheFromRaw(raw);
-}
-
-function writeStories(next: StoryEntry[]): void {
-  const raw = JSON.stringify(next);
-  window.localStorage.setItem(STORIES_KEY, raw);
-  updateCacheFromRaw(raw);
-  listeners.forEach((listener) => listener());
+async function fetchStories(): Promise<StoryEntry[]> {
+  const res = await fetch("/api/stories", { headers: { "x-user-id": STUDIO_USER } });
+  if (!res.ok) return [];
+  const data = await res.json() as StoryEntry[];
+  return data;
 }
 
 function makeStoryId(): string {
@@ -69,9 +26,18 @@ function makeStoryId(): string {
 
 export default function Dashboard() {
   const router = useRouter();
-  const stories = useSyncExternalStore(subscribe, snapshotStories, () => SERVER_SNAPSHOT);
+  const [stories, setStories] = useState<StoryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    fetchStories()
+      .then(setStories)
+      .catch(() => setError("Failed to load stories"))
+      .finally(() => setLoading(false));
+  }, []);
 
   const create = useCallback(
     async (event: React.FormEvent) => {
@@ -80,17 +46,18 @@ export default function Dashboard() {
       if (!name || busy) return;
       setBusy(true);
       const id = makeStoryId();
-      const entry: StoryEntry = { id, title: name, createdAt: new Date().toISOString() };
-      writeStories([entry, ...cachedStories]);
-      // Persist title to DB so the story never opens as "Untitled story".
-      await fetch(`/api/stories/${id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: name }),
-      });
-      setTitle("");
-      setBusy(false);
-      router.push(`/story/${id}`);
+      try {
+        await fetch("/api/stories", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-user-id": STUDIO_USER },
+          body: JSON.stringify({ id, title: name }),
+        });
+        setTitle("");
+        router.push(`/story/${id}`);
+      } catch {
+        setError("Failed to create story");
+        setBusy(false);
+      }
     },
     [title, busy, router],
   );
@@ -119,7 +86,15 @@ export default function Dashboard() {
         </button>
       </form>
 
-      {stories.length === 0 ? (
+      {error && (
+        <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-neutral-400">Loading stories…</p>
+      ) : stories.length === 0 ? (
         <p className="rounded-lg border border-dashed border-neutral-300 p-8 text-center text-sm text-neutral-500">
           No stories yet. Create your first one above.
         </p>

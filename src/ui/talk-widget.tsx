@@ -62,11 +62,6 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
 
   useEffect(() => () => clearPoll(), []);
 
-  // Reset append state when stage changes back to idle
-  useEffect(() => {
-    if (stage.kind === "idle") setAppended(false);
-  }, [stage.kind]);
-
   const poll = (dictationId: string) => {
     const tick = async () => {
       try {
@@ -276,7 +271,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
 
                   {dictation.transcript && (
                     <div className="max-h-32 overflow-y-auto rounded-lg bg-neutral-50 p-3 text-xs italic text-neutral-600">
-                      "{dictation.transcript}"
+                      &ldquo;{dictation.transcript}&rdquo;
                     </div>
                   )}
 

@@ -38,6 +38,8 @@ const stubLlm: LlmClient = {
 };
 
 const stubStoryWorldStore: StoryWorldStore = {
+  listStories: async () => [],
+  createStory: async () => {},
   getWorld: async () => null,
   updateStoryTitle: async () => {},
   commit: async () => ({

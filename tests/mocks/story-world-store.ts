@@ -12,20 +12,12 @@ import type { EntityType } from "@/domain/entity-types";
 import type { StoryEvent } from "@/domain/events";
 import type { EntityKnowledge } from "@/domain/knowledge";
 import type { Scene } from "@/domain/scenes";
-import type { StoryWorld } from "@/domain/story-world";
+import type { StoryMeta, StoryWorld } from "@/domain/story-world";
 
 function identity(): string {
   return randomUUID();
 }
 
-// In-memory StoryWorldStore for tests/dev.
-//
-// The world is a pure snapshot advanced exclusively through the domain
-// reducer `applyCommit` — commits that violate revision/validation invariants
-// throw (the same gate the Postgres adapter will enforce). Media (attachMedia)
-// and knowledge (insertKnowledge) are kept in auxiliary maps and merged into
-// reads at the current revision; the revision history itself is append-only
-// and immutable, so `byRevision` snapshots never drift.
 export interface MockStoryWorldStoreOptions {
   clock?: Clock;
   now?: () => Date;
@@ -38,6 +30,7 @@ export class MockStoryWorldStore implements StoryWorldStore {
   private readonly knowledgeBySubject = new Map<string, EntityKnowledge[]>();
   private readonly chaptersStore = new Map<string, Chapter[]>();
   private readonly proseScenesStore = new Map<string, Scene[]>();
+  private readonly ownedStories = new Map<string, StoryMeta[]>();
 
   constructor(private readonly options: MockStoryWorldStoreOptions = {}) {}
 
@@ -87,8 +80,6 @@ export class MockStoryWorldStore implements StoryWorldStore {
     return [...byId.values()];
   }
 
-  // Returns a world copy with auxiliary media + knowledge merged in, so every
-  // read reflects insertKnowledge/attachMedia without mutating the snapshot.
   private finalize(world: StoryWorld): StoryWorld {
     const entities = world.entities.map((entity) => {
       const media = this.mediaByEntity.get(entity.id);
@@ -98,6 +89,18 @@ export class MockStoryWorldStore implements StoryWorldStore {
     return { ...world, entities, knowledge };
   }
 
+  async listStories(ownerId: string): Promise<StoryMeta[]> {
+    return (this.ownedStories.get(ownerId) ?? []).slice().reverse();
+  }
+
+  async createStory(id: string, data: { title: string; ownerId: string }): Promise<void> {
+    const existing = this.ownedStories.get(data.ownerId) ?? [];
+    if (existing.some((s) => s.id === id)) return;
+    const meta: StoryMeta = { id, title: data.title, createdAt: this.now() };
+    this.ownedStories.set(data.ownerId, [...existing, meta]);
+    this.worlds.set(id, { ...this.createWorld(id), title: data.title });
+  }
+
   async getWorld(storyId: string): Promise<StoryWorld | null> {
     const world = this.worlds.get(storyId);
     return world ? this.finalize(world) : null;
@@ -105,8 +108,6 @@ export class MockStoryWorldStore implements StoryWorldStore {
 
   async commit(commit: Commit): Promise<CommitResult> {
     const existing = this.worlds.get(commit.storyId) ?? this.createWorld(commit.storyId);
-    // applyCommit is the single validation gate: revision mismatch, duplicate
-    // entities, unknown types, invalid attributes all throw here.
     const applied = applyCommit(existing, commit);
     this.worlds.set(commit.storyId, applied.world);
     this.recordSnapshot(commit.storyId, applied.world);

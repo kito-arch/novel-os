@@ -7,6 +7,12 @@ import type { Fact } from "./provenance";
 import type { Relationship } from "./relationships";
 import type { Scene } from "./scenes";
 
+export interface StoryMeta {
+  id: string;
+  title: string;
+  createdAt: Date;
+}
+
 export interface StoryWorld {
   id: string;
   title: string;

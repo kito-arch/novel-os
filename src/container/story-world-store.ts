@@ -5,7 +5,7 @@ import type { EntityType } from "../domain/entity-types";
 import type { StoryEvent } from "../domain/events";
 import type { EntityKnowledge } from "../domain/knowledge";
 import type { Scene } from "../domain/scenes";
-import type { StoryWorld } from "../domain/story-world";
+import type { StoryMeta, StoryWorld } from "../domain/story-world";
 
 export interface EntityRef {
   id: string;
@@ -32,6 +32,11 @@ export interface Snapshot {
 }
 
 export interface StoryWorldStore {
+  // Story list — all stories owned by a user, ordered by createdAt DESC.
+  listStories(ownerId: string): Promise<StoryMeta[]>;
+  // Explicit story creation — idempotent on id (second call with same id is a no-op).
+  createStory(id: string, data: { title: string; ownerId: string }): Promise<void>;
+
   // World access + append-only revision history.
   getWorld(storyId: string): Promise<StoryWorld | null>;
   updateStoryTitle(storyId: string, title: string): Promise<void>;

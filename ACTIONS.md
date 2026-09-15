@@ -614,10 +614,53 @@ Design: replace single-story redirect with a multi-story dashboard backed by loc
 - **Files:** `src/ui/story-screen.tsx`
 - **Acceptance:** Editing the title saves to DB. Sidebar and story bible reflect the new title within ~1s. No story ever shows "Untitled story" after creation.
 
-### T17.9 — Mock adapters relocated to src/adapters/mock ✅ Done
+### T17.9 — Mock adapters relocated to src/adapters/mock ✅ Done — ⚠️ Superseded by T19.1
 - **Scope:** Move mock adapters from `tests/mocks/` to `src/adapters/mock/` so the dev server can import them without crossing the `src/tests` boundary. Add `src/adapters/mock/container.ts` (moved from `tests/mocks/memory-container.ts`) and `src/adapters/mock/index.ts` barrel. Update all import paths in tests.
 - **Files:** `src/adapters/mock/`, `src/adapters/index.ts`, test import paths
 - **Acceptance:** `import { MockStoryWorldStore } from "@/adapters/mock"` works. All existing tests pass.
+- **Note:** This decision is reversed by T19.1 — mocks belong in `tests/` only; the dev fallback is removed entirely by T19.2.
+
+---
+
+## Phase 18: Unified Story Persistence
+
+Design: the story list and story data must live in the same store. Currently the dashboard stores story IDs + titles in `localStorage` while story contents live in Postgres (or the in-memory mock). This means stories "survive" a server restart on the client but their data is gone on the server — inconsistent regardless of which backend is active. The fix: remove localStorage from the dashboard, add `listStories`/`createStory` to `StoryWorldStore`, expose them via API routes, and fetch the list from the server.
+
+### T18.1 — Add `StoryMeta`, `listStories`, `createStory` to StoryWorldStore port + adapters
+- **Scope:** Add `StoryMeta { id: string; title: string; createdAt: Date }` to `src/domain/story-world.ts`. Extend `StoryWorldStore` port with `listStories(ownerId: string): Promise<StoryMeta[]>` and `createStory(id: string, data: { title: string; ownerId: string }): Promise<void>` (idempotent — ON CONFLICT DO NOTHING in Postgres). Implement in the Postgres adapter (SELECT from `stories` WHERE `owner_id`; INSERT with supplied UUID) and in the mock adapter (`tests/mocks/story-world-store.ts` — maintain an owned-stories list alongside `worlds`).
+- **Files:** `src/domain/story-world.ts`, `src/container/story-world-store.ts`, `src/adapters/postgres/story-world-store.ts`, `tests/mocks/story-world-store.ts`
+- **Deps:** T17.1, T8.2, T19.1
+- **Acceptance:** `createStory` called twice with the same id does not throw. `listStories(ownerId)` returns only that owner's stories ordered by `createdAt DESC`. Mock adapter passes the same assertions.
+
+### T18.2 — GET /api/stories + POST /api/stories routes
+- **Scope:** `GET /api/stories` — reads `x-user-id` header, calls `store.listStories(userId)`, returns `StoryMeta[]`. `POST /api/stories` — reads `x-user-id`, body `{ id: string; title: string }`, calls `store.createStory(id, { title, ownerId: userId })`, returns `{ id }`. `PATCH /api/stories/[id]` remains for title-only updates; it no longer doubles as lazy story creation (creation is now explicit via POST). Existing `PATCH` still calls `updateStoryTitle` which upserts the row — leave that behaviour intact as a safe fallback but document that POST is the canonical creation path.
+- **Files:** `src/app/api/stories/route.ts`, `src/app/api/stories/[id]/route.ts`
+- **Deps:** T18.1
+- **Acceptance:** `POST /api/stories` with `{ id: "uuid", title: "My Novel" }` → 201 `{ id }`. Second POST same id → 200 (idempotent). `GET /api/stories` returns the story. Missing `x-user-id` → 400.
+
+### T18.3 — Dashboard: replace localStorage with server-side story list
+- **Scope:** Remove all localStorage logic from `src/ui/dashboard.tsx` (`STORIES_KEY`, `useSyncExternalStore`, `writeStories`, `snapshotStories`, module-level cache vars). Replace with a `useEffect` + `fetch("/api/stories")` load (state: `stories`, `loading`, `error`). The `create` handler generates a UUID client-side (crypto.randomUUID()), POSTs to `/api/stories` with `{ id, title }`, then navigates — no optimistic write to localStorage. Show a loading skeleton while fetching and a clear error message on failure.
+- **Files:** `src/ui/dashboard.tsx`
+- **Deps:** T18.2
+- **Acceptance:** Story list survives a server restart (comes from DB). Creating a story in one browser tab shows up in another tab after refresh. Clearing the browser localStorage does not lose the story list.
+
+---
+
+## Phase 19: Mocks to tests/ Only — Remove Dev-Container Fallback
+
+Design: T17.9 moved mock adapters into `src/` so the dev server could import them as a no-API-keys fallback. This violates the rule that mocks are test doubles only (stated in T3.6 and the original Phase 4 design). All real adapters now exist (Postgres T8.x, OpenAI T9.x, AssemblyAI T10.x, SQS T11.x). Dev only requires `DATABASE_URL`; STT/LLM/SQS resolve lazily and only throw when their specific routes are hit. The fallback is unnecessary and misleading.
+
+### T19.1 — Move mocks back to tests/mocks/, delete src/adapters/mock/
+- **Scope:** Move the real implementations from `src/adapters/mock/*.ts` back into `tests/mocks/*.ts`, replacing the re-export stubs that are there now. Files to move: `clock.ts`, `llm.ts`, `sdk-model.ts`, `stt.ts`, `story-world-store.ts`, `transcript-store.ts`, `job-queue.ts`. Restore the actual `buildMemoryContainer` implementation into `tests/mocks/memory-container.ts` (inline — no import from `src/`). Update `tests/mocks/index.ts` barrel to export directly from the local files. Delete `src/adapters/mock/` entirely. Remove the mock re-export from `src/adapters/index.ts`. Update all test files that import from `@/adapters/mock/...` to import from `../../mocks/...` (relative) or via the barrel.
+- **Files:** `tests/mocks/`, `src/adapters/mock/` (deleted), `src/adapters/index.ts`, all affected test imports
+- **Deps:** T17.9 (supersedes)
+- **Acceptance:** No file under `src/` imports from `tests/` or contains mock/in-memory adapter implementations. `import { MockStoryWorldStore } from "tests/mocks"` works. All existing tests pass.
+
+### T19.2 — Remove dev-container fallback from app-container.ts
+- **Scope:** In `src/server/app-container.ts`, remove the try/catch in `resolveContainer()` that catches a failed `buildProductionContainer()` and falls back to `buildDevContainer()`. Remove the `buildDevContainer` import. `resolveContainer()` simply calls `buildProductionContainer()` directly — if it throws (e.g. `DATABASE_URL` missing), that error propagates as an unhandled server error with a clear message. Add a descriptive guard: if `DATABASE_URL` is absent, throw `"DATABASE_URL is required — run Postgres locally (see README) and set DATABASE_URL in .env.local"`. STT/LLM/SQS remain lazy-throw (only fail when their route is hit, not at startup), so `next dev` with only `DATABASE_URL` set is fully functional for the story/entity/chapters flows.
+- **Files:** `src/server/app-container.ts`
+- **Deps:** T19.1
+- **Acceptance:** `next dev` without `DATABASE_URL` logs a clear startup error. With `DATABASE_URL` set and no LLM/STT keys, all world/entity/chapter routes work; `/api/stories/[id]/ask` returns 501 with "LLM_API_KEY not configured". No mock code referenced anywhere outside `tests/`.
 
 ---
 
@@ -695,6 +738,10 @@ T5.1–T5.3 → T5.4 → T5.5
 T6.1–T6.3 → T7.x
 T5.4, T6.1, T7.x → T12.x → T13.x
 T11.x → T15.3
+T17.9 → T19.1 (superseded)
+T8.x → T18.1 → T18.2 → T18.3
+T19.1 → T19.2
+T19.2, T18.1 must precede any dev testing against real Postgres
 All → T14.x → T15.x
 ```
 
