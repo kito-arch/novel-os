@@ -153,7 +153,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-3 text-sm font-medium text-white shadow-lg hover:bg-neutral-700 transition-colors"
+        className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-3 text-sm font-medium text-white shadow-lg hover:bg-neutral-700 transition-colors sm:bottom-6 sm:right-6"
       >
         <span className="text-base">🎙</span>
         Narrate
@@ -161,7 +161,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
 
       {/* Modal */}
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-end p-6 pointer-events-none">
+        <div className="fixed inset-0 z-50 flex items-end justify-end p-2 sm:p-6 pointer-events-none">
           <div className="pointer-events-auto flex w-full max-w-sm flex-col rounded-2xl border border-neutral-200 bg-white shadow-2xl">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">

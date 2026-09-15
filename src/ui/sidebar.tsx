@@ -320,6 +320,14 @@ export default function Sidebar({ storyId }: { storyId: string }) {
         ☰
       </button>
 
+      {open && (
+        <div
+          className="fixed inset-0 z-30 bg-black/30 lg:hidden"
+          onClick={() => setOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       <aside
         className={`${
           open ? "translate-x-0" : "-translate-x-full"

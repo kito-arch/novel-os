@@ -6,6 +6,7 @@ import type { StoryWorld } from "@/domain/story-world";
 import EntityList from "./entity-list";
 import EntityDetail from "./entity-detail";
 import EntityCreateModal from "./entity-create-modal";
+import { InlineError, PageSpinner } from "./loading";
 import SceneCard from "./scene-card";
 import { fetchJson, studioHeaders } from "./api-client";
 
@@ -75,7 +76,7 @@ export default function StoryScreen({ storyId }: { storyId: string }) {
     [storyId, state, reload],
   );
 
-  if (state.kind === "loading") return <p className="text-sm text-neutral-500">Loading story bible…</p>;
+  if (state.kind === "loading") return <PageSpinner />;
 
   if (state.kind === "missing") {
     return (
@@ -111,7 +112,7 @@ export default function StoryScreen({ storyId }: { storyId: string }) {
   }
 
   if (state.kind === "error") {
-    return <p className="text-sm text-red-600">{state.message}</p>;
+    return <InlineError message={state.message} />;
   }
 
   const { world } = state;

@@ -1,6 +1,8 @@
 "use client";
 import { useRef, useState } from "react";
 import { fetchJson, studioHeaders } from "./api-client";
+import { Spinner } from "./loading";
+import { useToast } from "./toast";
 
 interface MediaUploadProps {
   storyId: string;
@@ -13,13 +15,12 @@ interface MediaUploadProps {
 export default function MediaUpload({ storyId, entityId, role, label, onUploaded }: MediaUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const handleChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     setUploading(true);
-    setError(null);
     try {
       const form = new FormData();
       form.append("file", file);
@@ -30,7 +31,7 @@ export default function MediaUpload({ storyId, entityId, role, label, onUploaded
       );
       onUploaded(result.id, result.url);
     } catch (err) {
-      setError((err as Error).message);
+      toast(err instanceof Error ? err.message : "Upload failed", "error");
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -44,11 +45,11 @@ export default function MediaUpload({ storyId, entityId, role, label, onUploaded
         type="button"
         onClick={() => inputRef.current?.click()}
         disabled={uploading}
-        className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs text-neutral-600 hover:bg-neutral-50 disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 px-3 py-1.5 text-xs text-neutral-600 hover:bg-neutral-50 disabled:opacity-50"
       >
+        {uploading && <Spinner size="sm" />}
         {uploading ? "Uploading…" : (label ?? `Upload ${role}`)}
       </button>
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
     </div>
   );
 }

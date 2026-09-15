@@ -3,6 +3,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { STUDIO_USER } from "@/ui/api-client";
+import { EmptyState, PageSpinner, Spinner } from "@/ui/loading";
+import { useToast } from "@/ui/toast";
 
 export interface StoryEntry {
   id: string;
@@ -12,9 +14,8 @@ export interface StoryEntry {
 
 async function fetchStories(): Promise<StoryEntry[]> {
   const res = await fetch("/api/stories", { headers: { "x-user-id": STUDIO_USER } });
-  if (!res.ok) return [];
-  const data = await res.json() as StoryEntry[];
-  return data;
+  if (!res.ok) throw new Error(`Failed to load stories (${res.status})`);
+  return res.json() as Promise<StoryEntry[]>;
 }
 
 function makeStoryId(): string {
@@ -26,18 +27,18 @@ function makeStoryId(): string {
 
 export default function Dashboard() {
   const router = useRouter();
+  const { toast } = useToast();
   const [stories, setStories] = useState<StoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     fetchStories()
       .then(setStories)
-      .catch(() => setError("Failed to load stories"))
+      .catch((err: Error) => toast(err.message, "error"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [toast]);
 
   const create = useCallback(
     async (event: React.FormEvent) => {
@@ -47,23 +48,24 @@ export default function Dashboard() {
       setBusy(true);
       const id = makeStoryId();
       try {
-        await fetch("/api/stories", {
+        const res = await fetch("/api/stories", {
           method: "POST",
           headers: { "content-type": "application/json", "x-user-id": STUDIO_USER },
           body: JSON.stringify({ id, title: name }),
         });
+        if (!res.ok) throw new Error(`Could not create story (${res.status})`);
         setTitle("");
         router.push(`/story/${id}`);
-      } catch {
-        setError("Failed to create story");
+      } catch (err) {
+        toast(err instanceof Error ? err.message : "Failed to create story", "error");
         setBusy(false);
       }
     },
-    [title, busy, router],
+    [title, busy, router, toast],
   );
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-12">
+    <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
       <h1 className="mb-1 text-3xl font-semibold text-neutral-900">Novel OS</h1>
       <p className="mb-10 text-sm text-neutral-500">
         A living story bible, built by talking.
@@ -80,24 +82,17 @@ export default function Dashboard() {
         <button
           type="submit"
           disabled={busy || !title.trim()}
-          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
         >
+          {busy && <Spinner size="sm" />}
           Create
         </button>
       </form>
 
-      {error && (
-        <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </p>
-      )}
-
       {loading ? (
-        <p className="text-sm text-neutral-400">Loading stories…</p>
+        <PageSpinner />
       ) : stories.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-neutral-300 p-8 text-center text-sm text-neutral-500">
-          No stories yet. Create your first one above.
-        </p>
+        <EmptyState message="No stories yet. Create your first one above." />
       ) : (
         <ul className="space-y-2">
           {stories.map((story) => (
