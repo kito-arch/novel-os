@@ -538,31 +538,31 @@ SQS replaces Redis/BullMQ (fully managed, nothing to run, DLQ + visibility-timeo
 
 Design: three authoring modes run in parallel — (a) voice dictation → LLM extraction (existing), (b) typed text → LLM extraction (same pipeline, no STT hop), (c) direct form-based entity creation (no LLM at all). All three commit through the same `StoryWorldStore.commit` path. Builtin entity types (character/place/object) are auto-registered on first direct-create. Media upload (portrait + gallery) is available for all `supportsMedia` base kinds directly from the entity detail and character sheet.
 
-### T16.1 — POST /api/stories/[id]/extract-text
+### T16.1 — POST /api/stories/[id]/extract-text ✅ Done
 - **Scope:** Accept `{ text: string }`. Create a dictation row (`status: "processing"`, `transcript: text`), run `TranscriptProcessor.process()` synchronously (no STT hop — text arrives pre-transcribed), update the row to `completed`/`failed` with the `CommitResult` summary, return `{ dictationId }`. The same `GET /api/dictations/[id]` polling endpoint works unchanged.
 - **Files:** `src/app/api/stories/[id]/extract-text/route.ts`
 - **Deps:** T5.4, T12.1, T12.2
 - **Acceptance:** POST `{ text: "Sarah walked into the bridge..." }` → `{ dictationId }` → poll → `{ status: "completed", summary: {...} }`.
 
-### T16.2 — POST /api/stories/[id]/entities (direct entity creation)
+### T16.2 — POST /api/stories/[id]/entities (direct entity creation) ✅ Done
 - **Scope:** Accept `{ name, entityTypeName, aliases?, attributes? }`. Looks up entity type in the world's registry (case-insensitive); if the type is a builtin (character/place/object) and not yet registered for this story, auto-registers it via `upsertEntityType` (creating the story shell if needed). Validates attributes against the type's `attributeDefs`, builds a `Commit`, and calls `store.commit()`. Returns the created entity. No LLM involved.
 - **Files:** `src/app/api/stories/[id]/entities/route.ts`
 - **Deps:** T2.3, T1.2, T12.3
 - **Acceptance:** POST `{ name: "Sarah", entityTypeName: "character" }` to a fresh story → entity created, story world exists, revision = 1. Invalid attributes → 400. Unknown non-builtin type → 404.
 
-### T16.3 — Talk screen: "Write" tab
+### T16.3 — Talk screen: "Write" tab ✅ Done
 - **Scope:** Add a "Speak / Write" tab pair to the Talk screen. The "Write" tab shows a plain textarea + submit button; on submit it POSTs to `POST /api/stories/[id]/extract-text`. The existing ResultCard + polling flow is reused unchanged. The mic capture moves under the "Speak" tab.
 - **Files:** `src/ui/talk-screen.tsx`
 - **Deps:** T16.1, T13.2
 - **Acceptance:** User can type a scene description, submit, and see the same result card as after audio dictation.
 
-### T16.4 — Entity creation form (modal)
+### T16.4 — Entity creation form (modal) ✅ Done
 - **Scope:** Implement `EntityCreateModal` — a modal with entity type selector (registered types + builtins not yet registered), name field (required), aliases field (comma-separated), and dynamic attribute fields from `attributeDefs` (multi fields accept comma-separated values). On submit calls `POST /api/stories/[id]/entities`; on success closes and calls `onCreated`. Add a global "+ New" button in the entity list + a "create your first character" link in the empty-story missing state.
 - **Files:** `src/ui/entity-create-modal.tsx`, `src/ui/entity-list.tsx`, `src/ui/story-screen.tsx`
 - **Deps:** T16.2
 - **Acceptance:** Click "+ New", fill name + type, submit → entity appears in the list without page reload.
 
-### T16.5 — Media upload in entity detail + character sheet
+### T16.5 — Media upload in entity detail + character sheet ✅ Done
 - **Scope:** Implement `MediaUpload` — a reusable component (`storyId`, `entityId`, `role`, `onUploaded`). Add a media section to `EntityDetail` for entities whose `baseKind.supportsMedia` is true (portrait slot + gallery grid; each image has a remove button via PATCH media list sync). Add portrait upload to the character screen Overview tab so users can set a photo without going to Edit. Gallery images also show a remove button.
 - **Files:** `src/ui/media-upload.tsx`, `src/ui/entity-detail.tsx`, `src/ui/character-screen.tsx`
 - **Deps:** T12.9
@@ -666,31 +666,31 @@ Design: T17.9 moved mock adapters into `src/` so the dev server could import the
 
 ## Phase 14: Tests & Verification
 
-### T14.1 — End-to-end integration test
+### T14.1 — End-to-end integration test ✅ Done
 - **Scope:** Write a full pipeline test: upload audio (mock STT) → extraction (mock LLM) → verify story world updated → query knowledge → run continuity check. All using memory adapters.
 - **Files:** `tests/integration/full-pipeline.test.ts`
 - **Deps:** T5.4, T6.1, T7.1, T7.2, T7.3
 - **Acceptance:** Test passes. Verifies the complete flow from dictation to story world query.
 
-### T14.2 — Adapter contract tests for Postgres adapters
+### T14.2 — Adapter contract tests for Postgres adapters ✅ Done
 - **Scope:** Run the contract test suite (T4.5) against Postgres `StoryWorldStore` and `TranscriptStore`. Requires test database.
 - **Files:** `tests/adapters/contract.postgres.test.ts`
 - **Deps:** T8.2, T8.3, T4.5
 - **Acceptance:** All contract tests pass against Postgres.
 
-### T14.3 — Cost guard test
+### T14.3 — Cost guard test ✅ Done
 - **Scope:** Create a fictional 80k-word corpus (generated programmatically). Run `ContextBuilder` 100 times with random transcript chunks. Assert average context package stays under 4k tokens.
 - **Files:** `tests/services/context/cost-guard.test.ts`
 - **Deps:** T6.1
 - **Acceptance:** Test passes. Average < 4k tokens.
 
-### T14.4 — Contradiction edge case tests
+### T14.4 — Contradiction edge case tests ✅ Done
 - **Scope:** Test contradiction handling with: same fact restated (no contradiction flagged), contradictory facts (tool warning surfaces), supersede flow (agent calls `supersede_fact` → old claim marked superseded), implicit vs explicit (strata preserved), contradictory facts across chapters (anachronism).
 - **Files:** `tests/services/llm-agent/tools/supersede.test.ts`
 - **Deps:** T5.5
 - **Acceptance:** All edge cases handled correctly.
 
-### T14.5 — Lint + typecheck pass
+### T14.5 — Lint + typecheck pass ✅ Done
 - **Scope:** Run `npm run lint` and `npx tsc --noEmit` across the entire codebase. Fix all errors.
 - **Files:** All
 - **Deps:** All previous tasks
