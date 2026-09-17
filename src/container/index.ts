@@ -112,7 +112,12 @@ export function buildContainer(config: AppConfig = loadConfig()): TypedContainer
       .toValue(
         new SqsJobQueue({
           queueUrl: config.SQS_QUEUE_URL,
-          client: new SQSClient({ region: config.AWS_REGION }),
+          client: new SQSClient({
+            region: config.AWS_REGION,
+            ...(config.AWS_ACCESS_KEY_ID && config.AWS_SECRET_ACCESS_KEY
+              ? { credentials: { accessKeyId: config.AWS_ACCESS_KEY_ID, secretAccessKey: config.AWS_SECRET_ACCESS_KEY } }
+              : {}),
+          }),
           maxConcurrency: 10,
           resilience: "local-fallback",
           logger: (line) => console.warn(line),
