@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 const PatchChapterSchema = z.object({
@@ -13,6 +14,8 @@ export async function PATCH(
   ctx: { params: Promise<{ id: string; chapterId: string }> },
 ): Promise<NextResponse> {
   const { id, chapterId } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
 
   let body: unknown;
@@ -32,10 +35,12 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   ctx: { params: Promise<{ id: string; chapterId: string }> },
 ): Promise<NextResponse> {
   const { id, chapterId } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
   await store.deleteChapter(id, chapterId);
   return NextResponse.json({ ok: true });

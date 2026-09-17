@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
-import { jsonError, userIdFrom } from "@/server/http";
+import { requireAuth } from "@/server/auth";
+import { jsonError } from "@/server/http";
 
 // T12.1 — Dictation upload. multipart/form-data: `audio` file + `storyId`.
 // The owning user comes from the session header (never the form/webhook).
@@ -8,8 +9,9 @@ import { jsonError, userIdFrom } from "@/server/http";
 // transcript_id returned by submitTranscription is persisted as providerJobId
 // so the callback (T12.10) can correlate the dictation by transcript_id only.
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const userId = userIdFrom(request);
-  if (!userId) return jsonError(401, "missing x-user-id header");
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+  const { userId } = auth;
 
   const form = await request.formData();
   const file = form.get("audio");

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 const CreateChapterSchema = z.object({
@@ -9,10 +10,12 @@ const CreateChapterSchema = z.object({
 });
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
   const chapterList = await store.listChapters(id);
   const scenes = await store.listProseScenes(id);
@@ -30,6 +33,8 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
 
   let body: unknown;

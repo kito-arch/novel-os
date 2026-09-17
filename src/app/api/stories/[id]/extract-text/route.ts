@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import type { ExtractionJob } from "@/container/job-queue";
 import { resolveContainer } from "@/server/app-container";
-import { jsonError, userIdFrom } from "@/server/http";
+import { storyGuard } from "@/server/auth";
+import { jsonError } from "@/server/http";
 
 // T16.1 — Text-to-extract: same extraction pipeline as audio dictation but no
 // STT hop. The transcript arrives directly from the user's textarea. A dictation
@@ -13,7 +14,9 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id: storyId } = await ctx.params;
-  const userId = userIdFrom(request);
+  const guard = await storyGuard(request, storyId);
+  if (guard instanceof NextResponse) return guard;
+  const { userId } = guard;
 
   let body: unknown;
   try {
@@ -60,7 +63,7 @@ export async function POST(
 
   const dictationId = await transcriptStore.saveDictation({
     storyId,
-    userId: userId ?? "anonymous",
+    userId,
     transcript,
     wordCount: transcript.split(/\s+/).filter(Boolean).length,
     status: "processing",

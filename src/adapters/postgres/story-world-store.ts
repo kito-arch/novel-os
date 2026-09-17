@@ -458,6 +458,15 @@ export class PostgresStoryWorldStore implements StoryWorldStore {
       .where(eq(stories.id, storyId));
   }
 
+  async checkStoryOwner(storyId: string, userId: string): Promise<boolean> {
+    const rows = await this.db
+      .select({ id: stories.id })
+      .from(stories)
+      .where(and(eq(stories.id, storyId), eq(stories.ownerId, userId)))
+      .limit(1);
+    return rows.length > 0;
+  }
+
   // --- Entity-type registry --------------------------------------------------
   async upsertEntityType(storyId: string, def: Omit<EntityType, "id" | "createdAt">): Promise<string> {
     await this.ensureStoryRow(storyId);

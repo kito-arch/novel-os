@@ -8,10 +8,11 @@ import { GET as getStory } from "@/app/api/stories/[id]/route";
 import { PATCH as patchEntity } from "@/app/api/stories/[id]/entities/[entityId]/route";
 import { POST as createEntityType } from "@/app/api/stories/[id]/entity-types/route";
 import { handle as createMedia } from "@/app/api/stories/[id]/entities/[entityId]/media/route";
-import { setup, type FixtureWorld } from "./fixtures";
+import { setup, TEST_USER_ID, type FixtureWorld } from "./fixtures";
+import type { MediaUploadMeta } from "@/server/media-storage";
 
 interface MediaStorageStub {
-  save: (buffer: Buffer, originalName: string) => Promise<string>;
+  save: (buffer: Buffer, originalName: string, meta: MediaUploadMeta) => Promise<string>;
 }
 
 function routerCtx<P extends Record<string, string>>(params: P): { params: Promise<P> } {
@@ -21,7 +22,7 @@ function routerCtx<P extends Record<string, string>>(params: P): { params: Promi
 async function mockBody(method: string, body: unknown, url: string, headers: Record<string, string> = {}): Promise<NextRequest> {
   return new NextRequest(url, {
     method,
-    headers: { "content-type": "application/json", ...headers },
+    headers: { "content-type": "application/json", "x-user-id": TEST_USER_ID, ...headers },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
 }
@@ -36,7 +37,9 @@ describe("GET /api/stories/[id] (T12.3)", () => {
 
   it("returns the full StoryWorld", async () => {
     const response = await getStory(
-      new NextRequest(`https://example.com/api/stories/${fixture.storyId}`),
+      new NextRequest(`https://example.com/api/stories/${fixture.storyId}`, {
+        headers: { "x-user-id": TEST_USER_ID },
+      }),
       routerCtx({ id: fixture.storyId }),
     );
     expect(response.status).toBe(200);
@@ -46,12 +49,14 @@ describe("GET /api/stories/[id] (T12.3)", () => {
     expect(world.entities.map((e: { name: string }) => e.name)).toEqual(["Sarah", "Kaden"]);
   });
 
-  it("404s an unknown story", async () => {
+  it("403s a story the user does not own", async () => {
     const response = await getStory(
-      new NextRequest("https://example.com/api/stories/unknown"),
+      new NextRequest("https://example.com/api/stories/unknown", {
+        headers: { "x-user-id": TEST_USER_ID },
+      }),
       routerCtx({ id: "not-a-story" }),
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
   });
 });
 
@@ -245,7 +250,7 @@ describe("POST /api/stories/[id]/entities/[entityId]/media (T12.9)", () => {
   it("attaches a gallery image to a character", async () => {
     const response = await createMedia(
       mediaRequest(fixture.sarah.id, "gallery", "Docks at dawn"),
-      { storyId: fixture.storyId, entityId: fixture.sarah.id },
+      { storyId: fixture.storyId, entityId: fixture.sarah.id, userId: TEST_USER_ID },
       storage,
     );
     expect(response.status).toBe(200);
@@ -266,7 +271,7 @@ describe("POST /api/stories/[id]/entities/[entityId]/media (T12.9)", () => {
     });
     const response = await createMedia(
       mediaRequest(fixture.sarah.id, "portrait", null),
-      { storyId: fixture.storyId, entityId: fixture.sarah.id },
+      { storyId: fixture.storyId, entityId: fixture.sarah.id, userId: TEST_USER_ID },
       storage,
     );
     expect(response.status).toBe(200);
@@ -320,7 +325,7 @@ describe("POST /api/stories/[id]/entities/[entityId]/media (T12.9)", () => {
     const faction = (await store.findEntityByName(fixture.storyId, "The Coalition"))!;
     const response = await createMedia(
       mediaRequest(faction.id, "gallery", null),
-      { storyId: fixture.storyId, entityId: faction.id },
+      { storyId: fixture.storyId, entityId: faction.id, userId: TEST_USER_ID },
       storage,
     );
     expect(response.status).toBe(400);
@@ -329,7 +334,7 @@ describe("POST /api/stories/[id]/entities/[entityId]/media (T12.9)", () => {
   it("rejects an invalid role", async () => {
     const response = await createMedia(
       mediaRequest(fixture.sarah.id, "banner", null),
-      { storyId: fixture.storyId, entityId: fixture.sarah.id },
+      { storyId: fixture.storyId, entityId: fixture.sarah.id, userId: TEST_USER_ID },
       storage,
     );
     expect(response.status).toBe(400);

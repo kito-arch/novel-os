@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 
 const MENTION_RE = /@\[([^\]]+)\]\(([^)]+)\)/g;
 
@@ -23,10 +24,12 @@ function buildSnippet(content: string, entityId: string): string | null {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   ctx: { params: Promise<{ id: string; entityId: string }> },
 ): Promise<NextResponse> {
   const { id, entityId } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
 
   const [scenes, chapters] = await Promise.all([

@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { CommitResult } from "@/domain/commits";
 import type { ExtractionJob } from "@/container/job-queue";
 import { resolveContainer } from "@/server/app-container";
-import { jsonError, userIdFrom } from "@/server/http";
+import { requireAuth } from "@/server/auth";
+import { jsonError } from "@/server/http";
 
 function summarizeCommit(r: CommitResult): string {
   const parts: string[] = [];
@@ -26,8 +27,9 @@ export async function POST(
   request: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const userId = userIdFrom(request);
-  if (!userId) return jsonError(401, "missing x-user-id header");
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+  const { userId } = auth;
 
   const { id: dictationId } = await ctx.params;
   const container = resolveContainer();
@@ -38,6 +40,9 @@ export async function POST(
 
   const dictation = await transcriptStore.getDictation(dictationId);
   if (!dictation) return jsonError(404, "dictation not found");
+
+  const owns = await resolveContainer().get("STORY_WORLD_STORE").checkStoryOwner(dictation.storyId, userId);
+  if (!owns) return jsonError(403, "forbidden");
 
   const transcript =
     typeof body.transcript === "string" && body.transcript.trim()

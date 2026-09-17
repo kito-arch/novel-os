@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { StoryWorld } from "@/domain/story-world";
-import { fetchJson, studioHeaders } from "@/ui/api-client";
+import { fetchJson } from "@/ui/api-client";
 import CharacterSheet from "@/ui/character-sheet";
 import EntityDetail from "@/ui/entity-detail";
 import EntityReferences from "@/ui/entity-references";
@@ -23,7 +23,7 @@ export default function CharacterScreen({ storyId, entityId }: { storyId: string
   useEffect(() => {
     let ignore = false;
     fetchJson<StoryWorld>(`/api/stories/${encodeURIComponent(storyId)}`, {
-      headers: studioHeaders(),
+
     })
       .then((world) => {
         if (!ignore) setDetail({ kind: "loaded", world });

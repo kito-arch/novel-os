@@ -10,6 +10,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+
 import type { TimelineRef } from "../src/domain/events";
 import type { AttributeDef, AttributeValue } from "../src/domain/entity-types";
 import type { CommitResult } from "../src/domain/commits";
@@ -50,20 +51,17 @@ export const contradictionActionEnum = pgEnum("contradiction_action", [
 // on `revision <= N`, so per-commit snapshots are reconstructible without an
 // explicit event-store log. Entity updates amend their row in place and keep
 // the introducing revision.
-export const stories = pgTable(
-  "stories",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    title: text("title").notNull(),
-    synopsis: text("synopsis"),
-    coverUrl: text("cover_url"),
-    ownerId: text("owner_id").notNull(),
-    storyType: text("story_type"),
-    revision: integer("revision").notNull().default(0),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
-  },
-);
+export const stories = pgTable("stories", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  title: text("title").notNull(),
+  synopsis: text("synopsis"),
+  coverUrl: text("cover_url"),
+  ownerId: text("owner_id").notNull(),
+  storyType: text("story_type"),
+  revision: integer("revision").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
 
 export const dictations = pgTable(
   "dictations",
@@ -92,7 +90,9 @@ export const entityTypes = pgTable(
   "entity_types",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    storyId: uuid("story_id").references(() => stories.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id").references(() => stories.id, {
+      onDelete: "cascade",
+    }),
     name: text("name").notNull(),
     pluralName: text("plural_name").notNull(),
     description: text("description"),
@@ -120,7 +120,9 @@ export const entities = pgTable(
       .references(() => entityTypes.id),
     name: text("name").notNull(),
     aliases: jsonb("aliases").$type<string[]>().default([]),
-    attributes: jsonb("attributes").$type<Record<string, AttributeValue>>().default({}),
+    attributes: jsonb("attributes")
+      .$type<Record<string, AttributeValue>>()
+      .default({}),
     revision: integer("revision").notNull().default(0),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -169,17 +171,22 @@ export const events = pgTable("events", {
   description: text("description"),
   settingId: uuid("setting_id").references(() => entities.id),
   whenRaw: text("when_raw"),
-  whenNormalized: jsonb("when_normalized").$type<NonNullable<TimelineRef["normalized"]>>(),
+  whenNormalized:
+    jsonb("when_normalized").$type<NonNullable<TimelineRef["normalized"]>>(),
   motivation: text("motivation"),
   consequences: jsonb("consequences").$type<string[]>().default([]),
   knowledgeGained: jsonb("knowledge_gained").$type<string[]>().default([]),
-  knowledgeConcealed: jsonb("knowledge_concealed").$type<string[]>().default([]),
+  knowledgeConcealed: jsonb("knowledge_concealed")
+    .$type<string[]>()
+    .default([]),
   participants: jsonb("participants").$type<string[]>().default([]),
   involvedObjects: jsonb("involved_objects").$type<string[]>().default([]),
   confidence: confidenceEnum("confidence").notNull(),
   provenanceDictationId: uuid("provenance_dictation_id"),
   provenanceText: text("provenance_text"),
-  sceneId: uuid("scene_id").references(() => scenes.id, { onDelete: "set null" }),
+  sceneId: uuid("scene_id").references(() => scenes.id, {
+    onDelete: "set null",
+  }),
   revision: integer("revision").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -240,10 +247,13 @@ export const scenes = pgTable("scenes", {
   title: text("title"),
   settingId: uuid("setting_id").references(() => entities.id),
   whenRaw: text("when_raw"),
-  whenNormalized: jsonb("when_normalized").$type<NonNullable<TimelineRef["normalized"]>>(),
+  whenNormalized:
+    jsonb("when_normalized").$type<NonNullable<TimelineRef["normalized"]>>(),
   summary: text("summary"),
   chapterNumber: integer("chapter_number"),
-  chapterId: uuid("chapter_id").references(() => chapters.id, { onDelete: "set null" }),
+  chapterId: uuid("chapter_id").references(() => chapters.id, {
+    onDelete: "set null",
+  }),
   position: integer("position").notNull().default(0),
   content: text("content"),
   eventIds: jsonb("event_ids").$type<string[]>().default([]),
@@ -261,8 +271,12 @@ export const plotThreads = pgTable("plot_threads", {
   title: text("title").notNull(),
   description: text("description"),
   status: plotThreadStatusEnum("status").default("introduced").notNull(),
-  introducedInSceneId: uuid("introduced_in_scene_id").references(() => scenes.id),
-  lastMentionedInSceneId: uuid("last_mentioned_in_scene_id").references(() => scenes.id),
+  introducedInSceneId: uuid("introduced_in_scene_id").references(
+    () => scenes.id,
+  ),
+  lastMentionedInSceneId: uuid("last_mentioned_in_scene_id").references(
+    () => scenes.id,
+  ),
   relatedEntityIds: jsonb("related_entity_ids").$type<string[]>().default([]),
   revision: integer("revision").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -316,3 +330,14 @@ export const processingJobs = pgTable("processing_jobs", {
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    email: text("email").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("users_email_idx").on(table.email)],
+);

@@ -11,7 +11,7 @@ import EntityList from "./entity-list";
 import EntityDetail from "./entity-detail";
 import EntityCreateModal from "./entity-create-modal";
 import { InlineError, PageSpinner } from "./loading";
-import { fetchJson, studioHeaders } from "./api-client";
+import { fetchJson } from "./api-client";
 
 interface ChapterWithScenes extends Chapter {
   scenes: Scene[];
@@ -110,7 +110,7 @@ function EventEditForm({
           `/api/stories/${encodeURIComponent(storyId)}/events/${encodeURIComponent(eventId)}`,
           {
             method: "PATCH",
-            headers: studioHeaders({ "content-type": "application/json" }),
+            headers: { "content-type": "application/json" },
             body: JSON.stringify(body),
           },
         );
@@ -119,7 +119,7 @@ function EventEditForm({
           `/api/stories/${encodeURIComponent(storyId)}/events`,
           {
             method: "POST",
-            headers: studioHeaders({ "content-type": "application/json" }),
+            headers: { "content-type": "application/json" },
             body: JSON.stringify(body),
           },
         );
@@ -589,7 +589,7 @@ function StoryBibleSection({
     let ignore = false;
     fetchJson<ChapterWithScenes[]>(
       `/api/stories/${encodeURIComponent(storyId)}/chapters`,
-      { headers: studioHeaders() },
+      {  },
     )
       .then((data) => { if (!ignore) setChapters(data); })
       .catch(() => {});
@@ -765,7 +765,7 @@ function StoryBibleSection({
           onConfirm={async () => {
             await fetchJson(
               `/api/stories/${encodeURIComponent(storyId)}/events/${encodeURIComponent(deleteTarget.id)}`,
-              { method: "DELETE", headers: studioHeaders() },
+              { method: "DELETE" },
             );
             setDeleteTarget(null);
             onChanged();
@@ -801,7 +801,7 @@ export default function StoryScreen({ storyId }: { storyId: string }) {
   useEffect(() => {
     let ignore = false;
     fetchJson<StoryWorld>(`/api/stories/${encodeURIComponent(storyId)}`, {
-      headers: studioHeaders(),
+
     })
       .then((world) => {
         if (!ignore) setState({ kind: "loaded", world });
@@ -833,7 +833,7 @@ export default function StoryScreen({ storyId }: { storyId: string }) {
       if (!trimmed || trimmed === state.world.title) return;
       await fetchJson(`/api/stories/${encodeURIComponent(storyId)}`, {
         method: "PATCH",
-        headers: studioHeaders({ "content-type": "application/json" }),
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: trimmed }),
       });
       reload();

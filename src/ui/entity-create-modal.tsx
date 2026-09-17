@@ -5,7 +5,7 @@ import { BASE_KIND_CATALOG } from "@/domain/base-kinds";
 import { coreEntityTypes } from "@/domain/builtins";
 import type { Entity } from "@/domain/entities";
 import type { AttributeValue, EntityType } from "@/domain/entity-types";
-import { fetchJson, studioHeaders } from "./api-client";
+import { fetchJson } from "./api-client";
 
 interface EntityCreateModalProps {
   storyId: string;
@@ -31,7 +31,7 @@ async function uploadMedia(
   form.append("role", role);
   await fetchJson(
     `/api/stories/${encodeURIComponent(storyId)}/entities/${encodeURIComponent(entityId)}/media`,
-    { method: "POST", headers: studioHeaders(), body: form },
+    { method: "POST", body: form },
   );
 }
 
@@ -105,7 +105,7 @@ export default function EntityCreateModal({
         `/api/stories/${encodeURIComponent(storyId)}/entities`,
         {
           method: "POST",
-          headers: studioHeaders({ "content-type": "application/json" }),
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({
             name: name.trim(),
             entityTypeName: selectedType.name,

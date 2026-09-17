@@ -5,7 +5,7 @@ import Image from "next/image";
 import { BASE_KIND_CATALOG } from "@/domain/base-kinds";
 import type { Entity, MediaRef } from "@/domain/entities";
 import type { AttributeValue, EntityType } from "@/domain/entity-types";
-import { fetchJson, studioHeaders } from "./api-client";
+import { fetchJson } from "./api-client";
 import ConfirmDeleteModal from "./confirm-delete-modal";
 import MediaUpload from "./media-upload";
 
@@ -53,7 +53,7 @@ export default function EntityDetail({ entity, entityType, storyId, onSaved }: E
         `/api/stories/${encodeURIComponent(storyId)}/entities/${encodeURIComponent(entity.id)}`,
         {
           method: "PATCH",
-          headers: studioHeaders({ "content-type": "application/json" }),
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({ attributes: coerced }),
         },
       );
@@ -74,7 +74,7 @@ export default function EntityDetail({ entity, entityType, storyId, onSaved }: E
         `/api/stories/${encodeURIComponent(storyId)}/entities/${encodeURIComponent(entity.id)}`,
         {
           method: "PATCH",
-          headers: studioHeaders({ "content-type": "application/json" }),
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({ media: next }),
         },
       );
@@ -112,7 +112,7 @@ export default function EntityDetail({ entity, entityType, storyId, onSaved }: E
           onConfirm={async () => {
             await fetchJson(
               `/api/stories/${encodeURIComponent(storyId)}/entities/${encodeURIComponent(entity.id)}`,
-              { method: "DELETE", headers: studioHeaders() },
+              { method: "DELETE" },
             );
             router.push(`/story/${storyId}`);
           }}

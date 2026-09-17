@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import MicCapture from "./mic-capture";
-import { fetchJson, studioHeaders } from "./api-client";
+import { fetchJson } from "./api-client";
 
 interface DictationStatus {
   id: string;
@@ -73,7 +73,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
       try {
         const status = await fetchJson<DictationStatus>(
           `/api/dictations/${encodeURIComponent(dictationId)}`,
-          { headers: studioHeaders() },
+          {  },
         );
 
         // Transcript ready but extraction not yet triggered — show review UI.
@@ -114,7 +114,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
     try {
       const { dictationId } = await fetchJson<{ dictationId: string; jobId: string }>(
         "/api/dictations",
-        { method: "POST", headers: studioHeaders(), body: form },
+        { method: "POST", body: form },
       );
       poll(dictationId);
     } catch (err) {
@@ -132,7 +132,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
         `/api/stories/${encodeURIComponent(storyId)}/extract-text`,
         {
           method: "POST",
-          headers: studioHeaders({ "content-type": "application/json" }),
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({
             text: text.trim(),
             ...(currentSceneId ? { sceneId: currentSceneId } : {}),
@@ -155,7 +155,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
         `/api/dictations/${encodeURIComponent(stage.id)}/extract`,
         {
           method: "POST",
-          headers: studioHeaders({ "content-type": "application/json" }),
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({
             transcript: reviewText,
             ...(currentSceneId ? { sceneId: currentSceneId } : {}),

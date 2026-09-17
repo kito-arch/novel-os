@@ -83,7 +83,7 @@ export class AssemblyAiStt implements SpeechToText {
       method: "POST",
       body: JSON.stringify({
         audio_url: upload.upload_url,
-        speech_model: "universal-2",
+        speech_models: ["universal-2"],
         ...(request.webhookUrl
           ? {
               webhook_url: request.webhookUrl,

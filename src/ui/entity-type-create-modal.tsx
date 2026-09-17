@@ -2,7 +2,7 @@
 import { useState } from "react";
 import type { EntityBaseKind } from "@/domain/base-kinds";
 import type { AttributeKind } from "@/domain/entity-types";
-import { fetchJson, studioHeaders } from "./api-client";
+import { fetchJson } from "./api-client";
 
 interface AttrRow {
   key: string;
@@ -102,7 +102,7 @@ export default function EntityTypeCreateModal({
     try {
       await fetchJson(`/api/stories/${encodeURIComponent(storyId)}/entity-types`, {
         method: "POST",
-        headers: studioHeaders({ "content-type": "application/json" }),
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name: name.trim().toLowerCase(),
           pluralName: (pluralName.trim() || autoPlural(name)).toLowerCase(),

@@ -13,9 +13,12 @@ import { askStory } from "@/services/reasoning/ask";
 import { doesEntityKnow } from "@/services/reasoning/knowledge";
 import { checkContinuity } from "@/services/reasoning/continuity";
 
+export const TEST_USER_ID = "test-user-001";
+
 export interface FixtureWorld {
   container: TypedContainer<AppRegistry>;
   storyId: string;
+  testUserId: string;
   characterType: EntityType;
   sarah: Entity;
   kaden: Entity;
@@ -88,6 +91,7 @@ export async function setup(opts?: SetupOptions): Promise<FixtureWorld> {
     contradictions: [],
     supersedeFactIds: [],
   };
+  await store.createStory(storyId, { title: "Test Story", ownerId: TEST_USER_ID });
   await store.commit(commitPayload);
 
   await store.insertKnowledge(storyId, {
@@ -123,5 +127,5 @@ export async function setup(opts?: SetupOptions): Promise<FixtureWorld> {
         checkContinuity({ store: resolve("STORY_WORLD_STORE"), llm: resolve("LLM") }, sid, analysisType),
   );
 
-  return { container, storyId, characterType, sarah, kaden };
+  return { container, storyId, testUserId: TEST_USER_ID, characterType, sarah, kaden };
 }

@@ -28,14 +28,14 @@ describe("POST /api/dictations (T12.1)", () => {
   });
   afterEach(() => resetTestContainer());
 
-  it("requires the x-user-id header", async () => {
+  it("requires authentication", async () => {
     const form = new FormData();
     form.append("audio", new File(["x"], "a.mp3"));
     form.append("storyId", STORY_ID);
     const request = new NextRequest("https://example.com/api/dictations", { method: "POST", body: form });
     const response = await createDictation(request);
     expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: expect.stringMatching(/x-user-id/) });
+    expect(await response.json()).toMatchObject({ error: expect.any(String) });
   });
 
   it("uploads a dictation, attributes the user from the header, and returns the provider job id", async () => {

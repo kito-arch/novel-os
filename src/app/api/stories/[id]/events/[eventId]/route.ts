@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 export async function PATCH(
@@ -7,6 +8,8 @@ export async function PATCH(
   ctx: { params: Promise<{ id: string; eventId: string }> },
 ): Promise<NextResponse> {
   const { id: storyId, eventId } = await ctx.params;
+  const guard = await storyGuard(request, storyId);
+  if (guard instanceof NextResponse) return guard;
 
   let body: unknown;
   try { body = await request.json(); } catch { return jsonError(400, "invalid JSON body"); }
@@ -37,10 +40,12 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   ctx: { params: Promise<{ id: string; eventId: string }> },
 ): Promise<NextResponse> {
   const { id: storyId, eventId } = await ctx.params;
+  const guard = await storyGuard(request, storyId);
+  if (guard instanceof NextResponse) return guard;
   await resolveContainer().get("STORY_WORLD_STORE").deleteEvent(storyId, eventId);
   return new NextResponse(null, { status: 204 });
 }

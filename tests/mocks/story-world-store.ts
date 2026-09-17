@@ -153,6 +153,10 @@ export class MockStoryWorldStore implements StoryWorldStore {
     this.worlds.set(storyId, { ...world, title });
   }
 
+  async checkStoryOwner(storyId: string, userId: string): Promise<boolean> {
+    return [...(this.ownedStories.get(userId) ?? [])].some((m) => m.id === storyId);
+  }
+
   async updateStoryCover(storyId: string, coverUrl: string | null): Promise<void> {
     const ownerId = [...this.ownedStories.entries()].find(([, metas]) =>
       metas.some((m) => m.id === storyId),

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 const CreateSceneSchema = z.object({
@@ -14,6 +15,8 @@ export async function POST(
   ctx: { params: Promise<{ id: string; chapterId: string }> },
 ): Promise<NextResponse> {
   const { id, chapterId } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
 
   let body: unknown;

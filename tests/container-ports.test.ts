@@ -43,6 +43,7 @@ const stubStoryWorldStore: StoryWorldStore = {
   getWorld: async () => null,
   updateStoryTitle: async () => {},
   updateStoryCover: async () => {},
+  checkStoryOwner: async () => true,
   commit: async () => ({
     revision: 1,
     entityTypesCreated: 0,

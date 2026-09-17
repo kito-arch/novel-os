@@ -7,6 +7,7 @@ import type { AttributeValue } from "@/domain/entity-types";
 import type { Commit } from "@/domain/commits";
 import { emptyCommit } from "@/domain/commits";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 interface CreateEntityBody {
@@ -25,6 +26,8 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id: storyId } = await ctx.params;
+  const guard = await storyGuard(request, storyId);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
 
   let body: unknown;

@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
-import { fetchJson, studioHeaders } from "./api-client";
+import { fetchJson } from "./api-client";
 import { Spinner } from "./loading";
 import { useToast } from "./toast";
 
@@ -27,7 +27,7 @@ export default function MediaUpload({ storyId, entityId, role, label, onUploaded
       form.append("role", role);
       const result = await fetchJson<{ id: string; url: string }>(
         `/api/stories/${encodeURIComponent(storyId)}/entities/${encodeURIComponent(entityId)}/media`,
-        { method: "POST", headers: studioHeaders(), body: form },
+        { method: "POST", body: form },
       );
       onUploaded(result.id, result.url);
     } catch (err) {

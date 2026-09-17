@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import MicCapture from "@/ui/mic-capture";
 import ResultCard from "@/ui/result-card";
-import { fetchJson, studioHeaders } from "@/ui/api-client";
+import { fetchJson } from "@/ui/api-client";
 
 interface DictationStatus {
   id: string;
@@ -45,7 +45,7 @@ export default function TalkScreen({ storyId }: { storyId: string }) {
       try {
         const status = await fetchJson<DictationStatus>(
           `/api/dictations/${encodeURIComponent(dictationId)}`,
-          { headers: studioHeaders() },
+          {  },
         );
         setStage({ kind: "active", id: dictationId, status });
         if (status.status === "completed" || status.status === "failed") {
@@ -72,7 +72,7 @@ export default function TalkScreen({ storyId }: { storyId: string }) {
     try {
       const { dictationId } = await fetchJson<{ dictationId: string; jobId: string }>(
         "/api/dictations",
-        { method: "POST", headers: studioHeaders(), body: form },
+        { method: "POST", body: form },
       );
       poll(dictationId);
     } catch (error) {
@@ -90,7 +90,7 @@ export default function TalkScreen({ storyId }: { storyId: string }) {
         `/api/stories/${encodeURIComponent(storyId)}/extract-text`,
         {
           method: "POST",
-          headers: studioHeaders({ "content-type": "application/json" }),
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({ text: text.trim() }),
         },
       );

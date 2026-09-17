@@ -6,7 +6,7 @@ import type { Entity } from "@/domain/entities";
 import type { EntityType } from "@/domain/entity-types";
 import type { Scene } from "@/domain/scenes";
 import type { StoryWorld } from "@/domain/story-world";
-import { fetchJson, studioHeaders } from "@/ui/api-client";
+import { fetchJson } from "@/ui/api-client";
 import ConfirmDeleteModal from "@/ui/confirm-delete-modal";
 import EntityDrawer from "@/ui/entity-drawer";
 import { linkEntities } from "@/ui/link-entities";
@@ -48,11 +48,11 @@ export default function SceneDetailScreen({
     Promise.all([
       fetchJson<Scene>(
         `/api/stories/${encodeURIComponent(storyId)}/scenes/${encodeURIComponent(sceneId)}`,
-        { headers: studioHeaders() },
+        {  },
       ),
       fetchJson<StoryWorld>(
         `/api/stories/${encodeURIComponent(storyId)}`,
-        { headers: studioHeaders() },
+        {  },
       ),
     ])
       .then(([s, world]) => {
@@ -76,7 +76,7 @@ export default function SceneDetailScreen({
           `/api/stories/${encodeURIComponent(storyId)}/scenes/${encodeURIComponent(sceneId)}`,
           {
             method: "PATCH",
-            headers: studioHeaders({ "content-type": "application/json" }),
+            headers: { "content-type": "application/json" },
             body: JSON.stringify({ title: nextTitle || null, content: nextContent }),
           },
         );
@@ -113,7 +113,7 @@ export default function SceneDetailScreen({
       try {
         const world = await fetchJson<StoryWorld>(
           `/api/stories/${encodeURIComponent(storyId)}`,
-          { headers: studioHeaders() },
+          {  },
         );
         freshEntities = world.entities;
         setEntities(world.entities);
@@ -169,7 +169,7 @@ export default function SceneDetailScreen({
               onConfirm={async () => {
                 await fetchJson(
                   `/api/stories/${encodeURIComponent(storyId)}/scenes/${encodeURIComponent(sceneId)}`,
-                  { method: "DELETE", headers: studioHeaders() },
+                  { method: "DELETE" },
                 );
                 router.push(basePath);
               }}

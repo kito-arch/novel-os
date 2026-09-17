@@ -11,16 +11,16 @@ import { POST as ask } from "@/app/api/stories/[id]/ask/route";
 import { POST as analyze } from "@/app/api/stories/[id]/analyze/route";
 import { POST as knowledge } from "@/app/api/stories/[id]/knowledge/route";
 import { POST as sttCallback } from "@/app/api/hooks/stt-callback/route";
-import { setup, type FixtureWorld } from "./fixtures";
+import { setup, TEST_USER_ID, type FixtureWorld } from "./fixtures";
 
 function routerCtx<P extends Record<string, string>>(params: P): { params: Promise<P> } {
   return { params: Promise.resolve(params) };
 }
 
-async function jsonRequest(url: string, body: unknown): Promise<NextRequest> {
+async function jsonRequest(url: string, body: unknown, userId = TEST_USER_ID): Promise<NextRequest> {
   return new NextRequest(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-user-id": userId },
     body: JSON.stringify(body),
   });
 }
@@ -86,12 +86,12 @@ describe("POST /api/stories/[id]/ask (T12.5)", () => {
     expect(response.status).toBe(400);
   });
 
-  it("404s an unknown story", async () => {
+  it("403s a story not owned by the user", async () => {
     const response = await ask(
       await jsonRequest("https://example.com/api/stories/unknown/ask", { question: "Hi" }),
       routerCtx({ id: "unknown" }),
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
   });
 });
 
@@ -269,7 +269,7 @@ describe("POST /api/hooks/stt-callback (T12.10)", () => {
     expect(response.status).toBe(404);
   });
 
-  it("marks the user's dictation completed and enqueues extraction with story identity", async () => {
+  it("saves transcript for review and does not auto-enqueue extraction", async () => {
     const dictationId = await createDictationRow();
     const request = new NextRequest("https://example.com/api/hooks/stt-callback", {
       method: "POST",
@@ -281,17 +281,12 @@ describe("POST /api/hooks/stt-callback (T12.10)", () => {
     expect(response.status).toBe(200);
 
     const dictation = await container.get("TRANSCRIPT_STORE").getDictation(dictationId);
-    expect(dictation?.status).toBe("completed");
+    expect(dictation?.status).toBe("processing");
     expect(dictation?.transcript).toBe("The Relentless sailed at dawn.");
     expect(dictation?.wordCount).toBe(5);
 
     const queue = container.get("JOB_QUEUE") as MockJobQueue;
-    const jobs = queue.enqueued.filter((job) => job.jobName === "extraction");
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0].data).toMatchObject({
-      dictationId,
-      storyId: fixture.storyId,
-      transcript: "The Relentless sailed at dawn.",
-    });
+    const extractionJobs = queue.enqueued.filter((job) => job.jobName === "extraction");
+    expect(extractionJobs).toHaveLength(0);
   });
 });

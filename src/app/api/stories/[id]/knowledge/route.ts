@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { knowledgeContext } from "@/services/reasoning/knowledge";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 // T12.7 — Does `entityName` know `factDescription`? Resolves the entity by name
@@ -11,12 +12,10 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const container = resolveContainer();
   const store = container.get("STORY_WORLD_STORE");
-
-  if (!(await store.getWorld(id))) {
-    return jsonError(404, "story not found");
-  }
 
   let body: unknown;
   try {

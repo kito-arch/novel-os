@@ -2,6 +2,7 @@ import { z } from "zod";
 import { NextResponse, type NextRequest } from "next/server";
 import { ANALYSIS_TYPES, type AnalysisType } from "@/services/reasoning/continuity";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 // T12.6 — Continuity analysis. Validates analysisType against the category
@@ -14,11 +15,9 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const container = resolveContainer();
-
-  if (!(await container.get("STORY_WORLD_STORE").getWorld(id))) {
-    return jsonError(404, "story not found");
-  }
 
   let body: unknown;
   try {

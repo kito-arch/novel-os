@@ -37,6 +37,7 @@ export interface StoryWorldStore {
   // Explicit story creation — idempotent on id (second call with same id is a no-op).
   createStory(id: string, data: { title: string; ownerId: string }): Promise<void>;
   updateStoryCover(storyId: string, coverUrl: string | null): Promise<void>;
+  checkStoryOwner(storyId: string, userId: string): Promise<boolean>;
 
   // World access + append-only revision history.
   getWorld(storyId: string): Promise<StoryWorld | null>;

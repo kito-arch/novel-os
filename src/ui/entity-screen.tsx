@@ -6,7 +6,7 @@ import { BASE_KIND_CATALOG } from "@/domain/base-kinds";
 import type { Entity } from "@/domain/entities";
 import type { AttributeValue, EntityType } from "@/domain/entity-types";
 import type { StoryWorld } from "@/domain/story-world";
-import { fetchJson, studioHeaders } from "@/ui/api-client";
+import { fetchJson } from "@/ui/api-client";
 import EntityDetail from "@/ui/entity-detail";
 import EntityReferences from "@/ui/entity-references";
 import MediaUpload from "@/ui/media-upload";
@@ -36,7 +36,7 @@ export default function EntityScreen({
   useEffect(() => {
     let ignore = false;
     fetchJson<StoryWorld>(`/api/stories/${encodeURIComponent(storyId)}`, {
-      headers: studioHeaders(),
+
     })
       .then((w) => { if (!ignore) { setWorld(w); setLoading(false); } })
       .catch(() => { if (!ignore) setLoading(false); });

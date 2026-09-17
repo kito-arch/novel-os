@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 const PatchSceneSchema = z.object({
@@ -10,10 +11,12 @@ const PatchSceneSchema = z.object({
 });
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   ctx: { params: Promise<{ id: string; sceneId: string }> },
 ): Promise<NextResponse> {
   const { id, sceneId } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
   const scene = await store.getProseScene(id, sceneId);
   if (!scene) return jsonError(404, "scene not found");
@@ -25,6 +28,8 @@ export async function PATCH(
   ctx: { params: Promise<{ id: string; sceneId: string }> },
 ): Promise<NextResponse> {
   const { id, sceneId } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
 
   let body: unknown;
@@ -44,10 +49,12 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   ctx: { params: Promise<{ id: string; sceneId: string }> },
 ): Promise<NextResponse> {
   const { id, sceneId } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
   await store.deleteProseScene(id, sceneId);
   return NextResponse.json({ ok: true });

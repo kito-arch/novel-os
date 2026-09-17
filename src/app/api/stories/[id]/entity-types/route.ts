@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { EntityBaseKindSchema } from "@/domain/base-kinds";
 import { AttributeDefSchema } from "@/domain/entity-types";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 // T12.8 — User-created entity types ($5.3). Registers a new type with
@@ -21,6 +22,8 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
 
   let body: unknown;

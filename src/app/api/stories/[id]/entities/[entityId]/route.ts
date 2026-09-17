@@ -4,6 +4,7 @@ import { validateEntity } from "@/domain/entities";
 import type { AttributeValue } from "@/domain/entity-types";
 import type { StoryWorldStore } from "@/container/story-world-store";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 interface EntityPatchBody {
@@ -22,6 +23,8 @@ export async function PATCH(
   ctx: { params: Promise<{ id: string; entityId: string }> },
 ): Promise<NextResponse> {
   const { id: storyId, entityId } = await ctx.params;
+  const guard = await storyGuard(request, storyId);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
 
   const world = await store.getWorld(storyId);
@@ -82,10 +85,12 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   ctx: { params: Promise<{ id: string; entityId: string }> },
 ): Promise<NextResponse> {
   const { id: storyId, entityId } = await ctx.params;
+  const guard = await storyGuard(request, storyId);
+  if (guard instanceof NextResponse) return guard;
   const store = resolveContainer().get("STORY_WORLD_STORE");
 
   const entity = await store.getEntity(storyId, entityId);

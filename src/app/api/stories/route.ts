@@ -1,17 +1,19 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
-import { jsonError, userIdFrom } from "@/server/http";
+import { requireAuth } from "@/server/auth";
+import { jsonError } from "@/server/http";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const userId = userIdFrom(request);
-  if (!userId) return jsonError(400, "x-user-id header is required");
-  const stories = await resolveContainer().get("STORY_WORLD_STORE").listStories(userId);
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+  const stories = await resolveContainer().get("STORY_WORLD_STORE").listStories(auth.userId);
   return NextResponse.json(stories);
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const userId = userIdFrom(request);
-  if (!userId) return jsonError(400, "x-user-id header is required");
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+  const { userId } = auth;
   let body: unknown;
   try { body = await request.json(); } catch { return jsonError(400, "invalid JSON"); }
   if (typeof body !== "object" || body === null) return jsonError(400, "body must be an object");

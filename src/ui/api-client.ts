@@ -1,12 +1,4 @@
-// MVP client helpers for talking to the Phase 12 API routes. The x-user-id
-// header is the mock auth seam defined in src/server/http.ts; a real session
-// will replace it later.
-export const STUDIO_USER = "studio-user";
-
-export function studioHeaders(extra?: Record<string, string>): Record<string, string> {
-  return { "x-user-id": STUDIO_USER, ...extra };
-}
-
+// Cookies are sent automatically on same-origin requests — no auth header needed.
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) {
@@ -25,4 +17,8 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
   const ct = response.headers.get("content-type") ?? "";
   if (!ct.includes("application/json")) return undefined as T;
   return (await response.json()) as T;
+}
+
+export async function logout(): Promise<void> {
+  await fetch("/api/auth/logout", { method: "POST" });
 }

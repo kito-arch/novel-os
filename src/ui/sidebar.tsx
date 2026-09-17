@@ -8,7 +8,7 @@ import type { Entity } from "@/domain/entities";
 import type { EntityType } from "@/domain/entity-types";
 import type { Scene } from "@/domain/scenes";
 import type { StoryWorld } from "@/domain/story-world";
-import { fetchJson, studioHeaders } from "./api-client";
+import { fetchJson } from "./api-client";
 import ChapterCreateModal from "./chapter-create-modal";
 import ConfirmDeleteModal from "./confirm-delete-modal";
 import EntityCreateModal from "./entity-create-modal";
@@ -247,7 +247,7 @@ export default function Sidebar({ storyId }: { storyId: string }) {
   useEffect(() => {
     let ignore = false;
     fetchJson<StoryWorld>(`/api/stories/${encodeURIComponent(storyId)}`, {
-      headers: studioHeaders(),
+
     })
       .then((data) => { if (!ignore) setWorld(data); })
       .catch(() => {});
@@ -258,7 +258,7 @@ export default function Sidebar({ storyId }: { storyId: string }) {
     let ignore = false;
     fetchJson<ChapterWithScenes[]>(
       `/api/stories/${encodeURIComponent(storyId)}/chapters`,
-      { headers: studioHeaders() },
+      {  },
     )
       .then((data) => { if (!ignore) setChapters(data); })
       .catch(() => {});
@@ -306,7 +306,7 @@ export default function Sidebar({ storyId }: { storyId: string }) {
       `/api/stories/${encodeURIComponent(storyId)}/chapters`,
       {
         method: "POST",
-        headers: studioHeaders({ "content-type": "application/json" }),
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: title.trim() }),
       },
     );
@@ -317,7 +317,7 @@ export default function Sidebar({ storyId }: { storyId: string }) {
       `/api/stories/${encodeURIComponent(storyId)}/chapters/${encodeURIComponent(chapterId)}/scenes`,
       {
         method: "POST",
-        headers: studioHeaders({ "content-type": "application/json" }),
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({}),
       },
     );
@@ -332,7 +332,7 @@ export default function Sidebar({ storyId }: { storyId: string }) {
       `/api/stories/${encodeURIComponent(storyId)}/chapters/${encodeURIComponent(chapterId)}/scenes`,
       {
         method: "POST",
-        headers: studioHeaders({ "content-type": "application/json" }),
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({}),
       },
     );

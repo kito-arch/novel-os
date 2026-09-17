@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 export async function POST(
@@ -7,6 +8,8 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id: storyId } = await ctx.params;
+  const guard = await storyGuard(request, storyId);
+  if (guard instanceof NextResponse) return guard;
 
   let body: unknown;
   try { body = await request.json(); } catch { return jsonError(400, "invalid JSON body"); }

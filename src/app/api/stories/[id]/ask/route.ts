@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
 // T12.5 — "Ask my story anything". The ASK_STORY service resolves mentions in
@@ -9,11 +10,9 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await ctx.params;
+  const guard = await storyGuard(request, id);
+  if (guard instanceof NextResponse) return guard;
   const container = resolveContainer();
-
-  if (!(await container.get("STORY_WORLD_STORE").getWorld(id))) {
-    return jsonError(404, "story not found");
-  }
 
   let body: unknown;
   try {

@@ -108,6 +108,7 @@ describe("AssemblyAiStt (T10.1)", () => {
     const submit = api.requests[1].jsonBody;
     expect(submit).toEqual({
       audio_url: "https://cdn.test/audio/1",
+      speech_models: ["universal-2"],
       webhook_url: "https://app.test/api/hooks/stt-callback",
       webhook_auth_header_name: "x-webhook-secret",
       webhook_auth_header_value: "secret",
@@ -122,7 +123,7 @@ describe("AssemblyAiStt (T10.1)", () => {
 
     await stt.submitTranscription({ audioBuffer: Buffer.from("x"), mimeType: "audio/wav" });
 
-    expect(api.requests[1].jsonBody).toEqual({ audio_url: "https://cdn.test/audio/1" });
+    expect(api.requests[1].jsonBody).toEqual({ audio_url: "https://cdn.test/audio/1", speech_models: ["universal-2"] });
   });
 
   it("getJobStatus maps queued → processing → completed with transcript text", async () => {
