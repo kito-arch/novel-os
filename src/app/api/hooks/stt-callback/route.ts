@@ -41,21 +41,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const result = await container.get("STT").getTranscript(transcriptId);
   const wordCount = countWords(result.transcript);
+  // Save transcript but leave status as "processing" — the user reviews and
+  // edits the transcript in the widget before triggering LLM extraction via
+  // POST /api/dictations/[id]/extract.
   await transcriptStore.updateDictation(dictation.id, {
-    status: "completed",
+    status: "processing",
     transcript: result.transcript,
     wordCount,
     durationSeconds: result.durationSeconds ?? undefined,
-    processedAt: new Date(),
   });
 
-  const job = await container.get("JOB_QUEUE").enqueue("extraction", {
-    dictationId: dictation.id,
-    storyId: dictation.storyId,
-    transcript: result.transcript,
-  });
-
-  return NextResponse.json({ ok: true, jobId: job.jobId });
+  return NextResponse.json({ ok: true });
 }
 
 function countWords(text: string): number {

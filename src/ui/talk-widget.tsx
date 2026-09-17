@@ -19,11 +19,11 @@ type Stage =
   | { kind: "idle" }
   | { kind: "uploading" }
   | { kind: "active"; id: string; status: DictationStatus }
+  | { kind: "review"; id: string; transcript: string }
   | { kind: "error"; message: string };
 
 type InputMode = "speak" | "write";
 
-// Emitted when extraction completes so the scene editor can append the text.
 function emitSceneAppend(sceneId: string, text: string) {
   window.dispatchEvent(
     new CustomEvent("novel-os:scene-append", { detail: { sceneId, text } }),
@@ -36,7 +36,6 @@ function emitWorldChanged(storyId: string) {
   );
 }
 
-// Extract sceneId from /story/[storyId]/scene/[sceneId]
 function sceneIdFromPath(pathname: string): string | null {
   const match = /\/story\/[^/]+\/scene\/([^/?#]+)/.exec(pathname);
   return match?.[1] ?? null;
@@ -49,6 +48,13 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
   const [text, setText] = useState("");
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
   const [appended, setAppended] = useState(false);
+
+  // Review-stage state
+  const [reviewText, setReviewText] = useState("");
+  const [extracting, setExtracting] = useState(false);
+  const [extractResult, setExtractResult] = useState<string | null>(null);
+  const [extractError, setExtractError] = useState<string | null>(null);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const currentSceneId = sceneIdFromPath(pathname);
@@ -69,6 +75,18 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
           `/api/dictations/${encodeURIComponent(dictationId)}`,
           { headers: studioHeaders() },
         );
+
+        // Transcript ready but extraction not yet triggered — show review UI.
+        if (status.status === "processing" && status.transcript) {
+          clearPoll();
+          setReviewText(status.transcript);
+          setExtractResult(null);
+          setExtractError(null);
+          setAppended(false);
+          setStage({ kind: "review", id: dictationId, transcript: status.transcript });
+          return;
+        }
+
         setStage({ kind: "active", id: dictationId, status });
         if (status.status === "completed" || status.status === "failed") {
           clearPoll();
@@ -128,31 +146,50 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
     }
   };
 
+  const handleExtract = async () => {
+    if (stage.kind !== "review") return;
+    setExtracting(true);
+    setExtractError(null);
+    try {
+      const result = await fetchJson<{ summary: string | null }>(
+        `/api/dictations/${encodeURIComponent(stage.id)}/extract`,
+        {
+          method: "POST",
+          headers: studioHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            transcript: reviewText,
+            ...(currentSceneId ? { sceneId: currentSceneId } : {}),
+          }),
+        },
+      );
+      setExtractResult(result.summary ?? "No changes");
+      emitWorldChanged(storyId);
+    } catch (err) {
+      setExtractError((err as Error).message);
+    } finally {
+      setExtracting(false);
+    }
+  };
+
   const reset = () => {
     clearPoll();
     setStage({ kind: "idle" });
     setAppended(false);
-  };
-
-  const appendToScene = () => {
-    if (
-      stage.kind !== "active" ||
-      stage.status.status !== "completed" ||
-      !stage.status.transcript ||
-      !currentSceneId
-    ) return;
-    emitSceneAppend(currentSceneId, stage.status.transcript);
-    setAppended(true);
+    setExtractResult(null);
+    setExtractError(null);
+    setExtracting(false);
   };
 
   const busy = stage.kind === "uploading";
   const dictation = stage.kind === "active" ? stage.status : null;
   const isCompleted = dictation?.status === "completed";
-  const isProcessing = stage.kind === "uploading" || dictation?.status === "pending" || dictation?.status === "processing";
+  const isProcessing =
+    stage.kind === "uploading" ||
+    dictation?.status === "pending" ||
+    dictation?.status === "processing";
 
   return (
     <>
-      {/* Floating trigger */}
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -162,7 +199,6 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
         Narrate
       </button>
 
-      {/* Modal */}
       {open && (
         <div className="fixed inset-0 z-50 flex items-end justify-end p-2 sm:p-6 pointer-events-none">
           <div className="pointer-events-auto flex w-full max-w-sm flex-col rounded-2xl border border-neutral-200 bg-white shadow-2xl">
@@ -172,7 +208,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
                 <p className="text-sm font-semibold text-neutral-800">Narrate</p>
                 <p className="text-xs text-neutral-400">
                   {currentSceneId
-                    ? "Appended to scene · entities updated"
+                    ? "Speak or write · add to scene or extract entities"
                     : "Speak or write — entities updated"}
                 </p>
               </div>
@@ -186,10 +222,9 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
             </div>
 
             <div className="flex flex-col gap-4 p-4">
-              {/* Only show input when not actively showing a result */}
-              {!dictation && (
+              {/* Input — hidden once a dictation is in flight or in review */}
+              {stage.kind === "idle" && (
                 <>
-                  {/* Mode tabs */}
                   <div className="flex gap-1.5">
                     {(["speak", "write"] as const).map((m) => (
                       <button
@@ -234,66 +269,56 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
                       </div>
                     </form>
                   )}
-
-                  {stage.kind === "error" && (
-                    <p className="text-xs text-red-600">{stage.message}</p>
-                  )}
                 </>
               )}
 
-              {/* Result */}
-              {dictation && (
+              {/* Error */}
+              {stage.kind === "error" && (
+                <>
+                  <p className="text-xs text-red-600">{stage.message}</p>
+                  <button
+                    type="button"
+                    onClick={reset}
+                    className="w-full rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700"
+                  >
+                    Try again
+                  </button>
+                </>
+              )}
+
+              {/* Uploading / transcribing spinner */}
+              {(stage.kind === "uploading" || (dictation && isProcessing)) && (
+                <div className="space-y-2">
+                  <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
+                    {stage.kind === "uploading" ? "Uploading…" : "Transcribing audio…"}
+                  </span>
+                  <p className="text-xs text-neutral-500">
+                    {stage.kind === "uploading"
+                      ? "Sending audio to transcription service…"
+                      : "Converting speech to text — this takes a few seconds…"}
+                  </p>
+                </div>
+              )}
+
+              {/* Write-mode completed result (no review step needed) */}
+              {dictation && isCompleted && (
                 <div className="space-y-3">
-                  {/* Status */}
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                        dictation.status === "completed"
-                          ? "bg-emerald-100 text-emerald-800"
-                          : dictation.status === "failed"
-                            ? "bg-red-100 text-red-800"
-                            : "bg-blue-100 text-blue-800"
-                      }`}
-                    >
-                      {dictation.status === "completed"
-                        ? "Entities updated"
-                        : dictation.status === "failed"
-                          ? "Failed"
-                          : "Processing…"}
-                    </span>
-                    {dictation.wordCount != null && (
-                      <span className="text-xs text-neutral-400">{dictation.wordCount} words</span>
-                    )}
-                  </div>
-
-                  {isProcessing && (
-                    <p className="text-xs text-neutral-500">
-                      Running extractor — building your story bible…
-                    </p>
+                  <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                    Entities updated
+                  </span>
+                  {dictation.wordCount != null && (
+                    <p className="text-xs text-neutral-400">{dictation.wordCount} words processed</p>
                   )}
-
-                  {dictation.transcript && (
-                    <div className="max-h-32 overflow-y-auto rounded-lg bg-neutral-50 p-3 text-xs italic text-neutral-600">
-                      &ldquo;{dictation.transcript}&rdquo;
-                    </div>
-                  )}
-
                   {dictation.summary && (
-                    <div>
-                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                        What changed
-                      </p>
-                      <p className="whitespace-pre-wrap text-xs text-neutral-700">
-                        {dictation.summary}
-                      </p>
-                    </div>
+                    <p className="whitespace-pre-wrap text-xs text-neutral-700">{dictation.summary}</p>
                   )}
-
-                  {/* Append to scene */}
-                  {isCompleted && currentSceneId && dictation.transcript && (
+                  {currentSceneId && dictation.transcript && (
                     <button
                       type="button"
-                      onClick={appendToScene}
+                      onClick={() => {
+                        emitSceneAppend(currentSceneId, dictation.transcript!);
+                        setAppended(true);
+                      }}
                       disabled={appended}
                       className={`w-full rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
                         appended
@@ -304,15 +329,91 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
                       {appended ? "✓ Added to scene" : "Add transcript to current scene"}
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={reset}
+                    className="w-full rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700"
+                  >
+                    Narrate again
+                  </button>
+                </div>
+              )}
 
-                  {isCompleted && (
-                    <button
-                      type="button"
-                      onClick={reset}
-                      className="w-full rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700"
-                    >
-                      Narrate again
-                    </button>
+              {/* Review stage — shown after audio is transcribed, before LLM extraction */}
+              {stage.kind === "review" && (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                    Review transcript
+                  </p>
+                  <textarea
+                    value={reviewText}
+                    onChange={(e) => setReviewText(e.target.value)}
+                    rows={6}
+                    className="w-full resize-none rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-500 focus:outline-none"
+                  />
+
+                  {!extractResult && (
+                    <div className="flex gap-2">
+                      {currentSceneId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            emitSceneAppend(currentSceneId, reviewText);
+                            setAppended(true);
+                          }}
+                          disabled={appended}
+                          className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                            appended
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                          }`}
+                        >
+                          {appended ? "✓ Added to scene" : "Add to scene"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleExtract}
+                        disabled={extracting || !reviewText.trim()}
+                        className="flex-1 rounded-lg bg-neutral-900 px-3 py-2 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+                      >
+                        {extracting ? "Extracting…" : "Extract entities"}
+                      </button>
+                    </div>
+                  )}
+
+                  {extractError && (
+                    <p className="text-xs text-red-600">{extractError}</p>
+                  )}
+
+                  {extractResult && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-emerald-700">{extractResult}</p>
+                      {currentSceneId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            emitSceneAppend(currentSceneId, reviewText);
+                            setAppended(true);
+                          }}
+                          disabled={appended}
+                          className={`w-full rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                            appended
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                          }`}
+                        >
+                          {appended ? "✓ Added to scene" : "Add to scene"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={reset}
+                        className="w-full rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700"
+                      >
+                        Narrate again
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
