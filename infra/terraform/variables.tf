@@ -22,11 +22,17 @@ variable "max_receive_count" {
   default     = 3
 }
 
+variable "bucket_name" {
+  description = "S3 bucket name for media uploads (must be globally unique)"
+  type        = string
+  default     = "novel-os-media"
+}
+
 variable "tags" {
   description = "Tags applied to all resources"
   type        = map(string)
   default = {
-    Project = "novel-os"
+    Project   = "novel-os"
     ManagedBy = "terraform"
   }
 }

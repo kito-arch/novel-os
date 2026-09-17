@@ -36,14 +36,36 @@ resource "aws_sqs_queue" "main" {
   tags = var.tags
 }
 
+# ── S3 media bucket ──────────────────────────────────────────────────────────
+resource "aws_s3_bucket" "media" {
+  bucket = var.bucket_name
+  tags   = var.tags
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "media" {
+  bucket = aws_s3_bucket.media.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "media" {
+  bucket = aws_s3_bucket.media.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
 # ── IAM policy document ──────────────────────────────────────────────────────
-# Grants the minimum permissions the SqsJobQueue adapter needs:
-#   enqueue  → SendMessage
-#   consume  → ReceiveMessage, DeleteMessage
-#   fallback → (none — DLQ send goes through the same SendMessage permission)
+# Grants the minimum permissions for SQS (job queue) and S3 (media storage).
 data "aws_iam_policy_document" "sqs_app" {
   statement {
-    sid    = "SendReceiveDelete"
+    sid    = "SqsSendReceiveDelete"
     effect = "Allow"
     actions = [
       "sqs:SendMessage",
@@ -55,6 +77,24 @@ data "aws_iam_policy_document" "sqs_app" {
       aws_sqs_queue.main.arn,
       aws_sqs_queue.dlq.arn,
     ]
+  }
+
+  statement {
+    sid    = "S3MediaObjects"
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:GetObject",
+      "s3:DeleteObject",
+    ]
+    resources = ["${aws_s3_bucket.media.arn}/*"]
+  }
+
+  statement {
+    sid       = "S3MediaBucket"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.media.arn]
   }
 }
 

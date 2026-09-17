@@ -22,3 +22,13 @@ output "iam_policy_arn" {
   description = "Attach this policy to the IAM user/role your app uses"
   value       = aws_iam_policy.sqs_app.arn
 }
+
+output "bucket_name" {
+  description = "Set this as S3_BUCKET in your .env"
+  value       = aws_s3_bucket.media.bucket
+}
+
+output "bucket_arn" {
+  description = "ARN of the media S3 bucket"
+  value       = aws_s3_bucket.media.arn
+}
