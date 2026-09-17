@@ -2,9 +2,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { STUDIO_USER } from "@/ui/api-client";
 import { PageSpinner, Spinner } from "@/ui/loading";
 import { useToast } from "@/ui/toast";
+import { logout } from "@/ui/api-client";
 
 export interface StoryEntry {
   id: string;
@@ -14,7 +14,7 @@ export interface StoryEntry {
 }
 
 async function fetchStories(): Promise<StoryEntry[]> {
-  const res = await fetch("/api/stories", { headers: { "x-user-id": STUDIO_USER } });
+  const res = await fetch("/api/stories");
   if (!res.ok) throw new Error(`Failed to load stories (${res.status})`);
   return res.json() as Promise<StoryEntry[]>;
 }
@@ -61,18 +61,16 @@ function BookCover({
     if (!file) return;
     setUploading(true);
     try {
-      const reader = new FileReader();
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/stories/${encodeURIComponent(story.id)}/cover`, {
+        method: "POST",
+        body: form,
       });
-      const res = await fetch(`/api/stories/${encodeURIComponent(story.id)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json", "x-user-id": STUDIO_USER },
-        body: JSON.stringify({ coverUrl: dataUrl }),
-      });
-      if (res.ok) onCoverChange(dataUrl);
+      if (res.ok) {
+        const { url } = await res.json() as { url: string };
+        onCoverChange(url);
+      }
     } finally {
       setUploading(false);
       e.target.value = "";
@@ -146,7 +144,7 @@ function BookCover({
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 opacity-0 transition-opacity group-hover/cover:opacity-100">
           <button
             type="button"
-            onClick={(e) => { e.preventDefault(); fileRef.current?.click(); }}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); fileRef.current?.click(); }}
             disabled={uploading}
             className="flex flex-col items-center gap-1 text-white/90 hover:text-white"
           >
@@ -168,10 +166,9 @@ function BookCover({
               type="button"
               onClick={async (e) => {
                 e.preventDefault();
-                await fetch(`/api/stories/${encodeURIComponent(story.id)}`, {
-                  method: "PATCH",
-                  headers: { "content-type": "application/json", "x-user-id": STUDIO_USER },
-                  body: JSON.stringify({ coverUrl: null }),
+                e.stopPropagation();
+                await fetch(`/api/stories/${encodeURIComponent(story.id)}/cover`, {
+                  method: "DELETE",
                 });
                 onCoverChange(null);
               }}
@@ -188,6 +185,7 @@ function BookCover({
         type="file"
         accept="image/*"
         className="hidden"
+        onClick={(e) => e.stopPropagation()}
         onChange={handleFile}
       />
     </div>
@@ -313,6 +311,12 @@ function NewStoryCard({ onCreate }: { onCreate: (title: string) => Promise<void>
 export default function Dashboard() {
   const router = useRouter();
   const { toast } = useToast();
+
+  async function handleLogout() {
+    await logout();
+    router.push("/auth");
+    router.refresh();
+  }
   const [stories, setStories] = useState<StoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -329,7 +333,7 @@ export default function Dashboard() {
       const id = makeStoryId();
       const res = await fetch("/api/stories", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-user-id": STUDIO_USER },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ id, title }),
       });
       if (!res.ok) throw new Error(`Could not create story (${res.status})`);
@@ -353,9 +357,17 @@ export default function Dashboard() {
     <div className="min-h-screen bg-neutral-50">
       <div className="mx-auto max-w-5xl px-6 py-14">
         {/* Header */}
-        <div className="mb-10 text-center">
-          <h1 className="text-3xl font-semibold tracking-tight text-neutral-900">Novel OS</h1>
-          <p className="mt-1 text-sm text-neutral-500">A living story bible, built by talking.</p>
+        <div className="mb-10 flex items-center justify-between">
+          <div className="text-center flex-1">
+            <h1 className="text-3xl font-semibold tracking-tight text-neutral-900">Novel OS</h1>
+            <p className="mt-1 text-sm text-neutral-500">A living story bible, built by talking.</p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="absolute right-6 top-14 text-sm text-neutral-400 hover:text-neutral-700 transition-colors"
+          >
+            Sign out
+          </button>
         </div>
 
         {/* Search */}

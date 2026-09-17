@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { BASE_KIND_CATALOG } from "@/domain/base-kinds";
 import type { MediaRef } from "@/domain/entities";
 import { resolveContainer } from "@/server/app-container";
+import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 import type { MediaStorage } from "@/server/media-storage";
 import { defaultMediaStorage } from "@/server/media-storage";
@@ -17,16 +18,18 @@ export async function POST(
   ctx: { params: Promise<{ id: string; entityId: string }> },
 ): Promise<NextResponse> {
   const { id: storyId, entityId } = await ctx.params;
-  return handle(request, { storyId, entityId }, defaultMediaStorage);
+  const guard = await storyGuard(request, storyId);
+  if (guard instanceof NextResponse) return guard;
+  return handle(request, { storyId, entityId, userId: guard.userId }, defaultMediaStorage);
 }
 
 // Storage is the seam route tests stub out when they don't want real files.
 export async function handle(
   request: NextRequest,
-  params: { storyId: string; entityId: string },
+  params: { storyId: string; entityId: string; userId: string },
   storage: MediaStorage,
 ): Promise<NextResponse> {
-  const { storyId, entityId } = params;
+  const { storyId, entityId, userId } = params;
   const store = resolveContainer().get("STORY_WORLD_STORE");
 
   const world = await store.getWorld(storyId);
@@ -57,7 +60,7 @@ export async function handle(
     if (current) await store.removeMedia(entityId, current.id);
   }
 
-  const url = await storage.save(buffer, file.name || `${role}.bin`);
+  const url = await storage.save(buffer, file.name || `${role}.bin`, { userId, storyId });
   const mediaId = await store.attachMedia(entityId, { url, role, caption });
   return NextResponse.json({ id: mediaId, url, role, caption });
 }
