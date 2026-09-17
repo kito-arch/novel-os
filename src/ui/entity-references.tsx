@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { fetchJson, studioHeaders } from "./api-client";
+import { fetchJson } from "./api-client";
 
 interface Reference {
   sceneId: string;
@@ -23,7 +23,7 @@ export default function EntityReferences({ storyId, entityId }: EntityReferences
     let ignore = false;
     fetchJson<Reference[]>(
       `/api/stories/${encodeURIComponent(storyId)}/entities/${encodeURIComponent(entityId)}/references`,
-      { headers: studioHeaders() },
+      {  },
     )
       .then((data) => { if (!ignore) setRefs(data); })
       .catch(() => { if (!ignore) setRefs([]); });
