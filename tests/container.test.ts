@@ -50,6 +50,10 @@ const stubStoryWorldStore: StoryWorldStore = {
   createProseScene: async () => "scene-1",
   updateProseScene: async () => {},
   deleteProseScene: async () => {},
+  deleteEntity: async () => {},
+  deleteEvent: async () => {},
+  updateEvent: async () => {},
+  createEvent: async () => "event-1",
 };
 
 describe("ioctopus container", () => {

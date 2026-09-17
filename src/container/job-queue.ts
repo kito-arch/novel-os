@@ -4,6 +4,10 @@ export interface ExtractionJob {
   dictationId: string;
   storyId: string;
   transcript: string;
+  sceneId?: string | null;
+  chapterId?: string | null;
+  sceneTitle?: string | null;
+  chapterTitle?: string | null;
 }
 
 // Provider-agnostic: production adapter is AWS SQS (fully managed), dev/test uses

@@ -28,6 +28,7 @@ export const EventSchema = z.object({
   involvedObjects: z.array(z.string().uuid()).default([]),
   confidence: ConfidenceSchema,
   provenance: ProvenanceSchema,
+  sceneId: z.string().uuid().nullable().default(null),
   createdAt: z.date(),
 });
 export type StoryEvent = z.infer<typeof EventSchema>;

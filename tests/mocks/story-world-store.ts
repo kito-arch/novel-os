@@ -347,6 +347,86 @@ export class MockStoryWorldStore implements StoryWorldStore {
     const list = this.proseScenesStore.get(storyId) ?? [];
     this.proseScenesStore.set(storyId, list.filter((s) => s.id !== sceneId));
   }
+
+  async deleteEntity(storyId: string, entityId: string): Promise<void> {
+    const world = this.worlds.get(storyId);
+    if (world) world.entities = world.entities.filter((e) => e.id !== entityId);
+  }
+
+  async deleteEvent(storyId: string, eventId: string): Promise<void> {
+    const world = this.worlds.get(storyId);
+    if (world) world.events = world.events.filter((e) => e.id !== eventId);
+  }
+
+  async updateEvent(
+    storyId: string,
+    eventId: string,
+    patch: {
+      title?: string;
+      description?: string | null;
+      when?: string | null;
+      settingId?: string | null;
+      sceneId?: string | null;
+      participants?: string[];
+      involvedObjects?: string[];
+      motivation?: string | null;
+      consequences?: string[];
+      confidence?: string;
+    },
+  ): Promise<void> {
+    const world = this.worlds.get(storyId);
+    if (!world) return;
+    const event = world.events.find((e) => e.id === eventId);
+    if (!event) return;
+    if (patch.title !== undefined) event.title = patch.title;
+    if (patch.description !== undefined) event.description = patch.description;
+    if (patch.when !== undefined) event.when = patch.when ? { raw: patch.when } : null;
+    if (patch.settingId !== undefined) event.settingId = patch.settingId;
+    if (patch.sceneId !== undefined) event.sceneId = patch.sceneId;
+    if (patch.participants !== undefined) event.participants = patch.participants;
+    if (patch.involvedObjects !== undefined) event.involvedObjects = patch.involvedObjects;
+    if (patch.motivation !== undefined) event.motivation = patch.motivation;
+    if (patch.consequences !== undefined) event.consequences = patch.consequences;
+    if (patch.confidence !== undefined) event.confidence = patch.confidence as StoryEvent["confidence"];
+  }
+
+  async createEvent(
+    storyId: string,
+    data: {
+      title: string;
+      confidence: string;
+      description?: string | null;
+      when?: string | null;
+      settingId?: string | null;
+      sceneId?: string | null;
+      participants?: string[];
+      involvedObjects?: string[];
+      motivation?: string | null;
+      consequences?: string[];
+    },
+  ): Promise<string> {
+    const world = this.worlds.get(storyId) ?? this.createWorld(storyId);
+    const id = randomUUID();
+    const event: StoryEvent = {
+      id,
+      title: data.title,
+      description: data.description ?? null,
+      settingId: data.settingId ?? null,
+      sceneId: data.sceneId ?? null,
+      when: data.when ? { raw: data.when } : null,
+      motivation: data.motivation ?? null,
+      consequences: data.consequences ?? [],
+      knowledgeGained: [],
+      knowledgeConcealed: [],
+      participants: data.participants ?? [],
+      involvedObjects: data.involvedObjects ?? [],
+      confidence: data.confidence as StoryEvent["confidence"],
+      provenance: { dictationId: "", textChunk: "", confidence: data.confidence as StoryEvent["confidence"] },
+      createdAt: this.now(),
+    };
+    this.worlds.set(storyId, { ...world, events: [...world.events, event] });
+    return id;
+  }
 }
 
 export function createMockStoryWorldStore(

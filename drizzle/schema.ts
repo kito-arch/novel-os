@@ -178,6 +178,7 @@ export const events = pgTable("events", {
   confidence: confidenceEnum("confidence").notNull(),
   provenanceDictationId: uuid("provenance_dictation_id"),
   provenanceText: text("provenance_text"),
+  sceneId: uuid("scene_id").references(() => scenes.id, { onDelete: "set null" }),
   revision: integer("revision").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

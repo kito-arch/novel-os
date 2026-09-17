@@ -216,6 +216,12 @@ export const STORY_TOOL_CATALOG: Record<StoryToolName, StoryToolDefinition> = {
           .optional(),
         involvedObjectNames: z.array(z.string()).optional(),
         confidence: confidenceEnum.optional(),
+        sceneId: z
+          .string()
+          .uuid()
+          .nullable()
+          .describe("UUID of the scene this event occurs in; use the current scene id from the system prompt when narrating.")
+          .optional(),
       })
       .strict(),
   },

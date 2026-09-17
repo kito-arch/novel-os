@@ -77,4 +77,38 @@ export interface StoryWorldStore {
   createProseScene(storyId: string, data: { chapterId: string; title?: string; content?: string; position: number }): Promise<string>;
   updateProseScene(storyId: string, sceneId: string, patch: { title?: string; content?: string; position?: number }): Promise<void>;
   deleteProseScene(storyId: string, sceneId: string): Promise<void>;
+
+  deleteEntity(storyId: string, entityId: string): Promise<void>;
+  deleteEvent(storyId: string, eventId: string): Promise<void>;
+  updateEvent(
+    storyId: string,
+    eventId: string,
+    patch: {
+      title?: string;
+      description?: string | null;
+      when?: string | null;
+      settingId?: string | null;
+      sceneId?: string | null;
+      participants?: string[];
+      involvedObjects?: string[];
+      motivation?: string | null;
+      consequences?: string[];
+      confidence?: string;
+    },
+  ): Promise<void>;
+  createEvent(
+    storyId: string,
+    data: {
+      title: string;
+      confidence: string;
+      description?: string | null;
+      when?: string | null;
+      settingId?: string | null;
+      sceneId?: string | null;
+      participants?: string[];
+      involvedObjects?: string[];
+      motivation?: string | null;
+      consequences?: string[];
+    },
+  ): Promise<string>;
 }

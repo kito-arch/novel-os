@@ -318,20 +318,15 @@ async function queryEvents(
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const entityId = str(args, "entityId") ?? undefined;
-  const events = await store.queryEvents(session.storyId, { entityId, limit: 50, offset: 0 });
-  return ToolOutput.ok(`events found: ${events.length}`, {
+  const events = await store.queryEvents(session.storyId, { entityId, limit: 20, offset: 0 });
+  return ToolOutput.ok(`events found: ${events.length} (most recent 20)`, {
     events: events.map((event) => ({
       id: event.id,
       title: event.title,
       description: event.description,
-      settingId: event.settingId,
       when: event.when,
-      motivation: event.motivation,
-      consequences: event.consequences,
       participants: event.participants,
-      involvedObjects: event.involvedObjects,
       confidence: event.confidence,
-      createdAt: event.createdAt.toISOString(),
     })),
   });
 }
@@ -410,6 +405,17 @@ async function stageCreateEntity(
     return ToolOutput.err(
       `stage_create_entity: entity "${name}" already exists (registry or staged); update it with stage_update_entity instead`,
     );
+  }
+
+  // Also guard against alias conflicts: if any proposed alias matches an
+  // existing entity's name or alias, this is the same entity — update instead.
+  const proposedAliases = arr(args, "aliases") ?? [];
+  for (const alias of proposedAliases) {
+    if (entityNameExists(session, world, alias)) {
+      return ToolOutput.err(
+        `stage_create_entity: alias "${alias}" already matches an existing entity; use stage_update_entity on that entity to add the name "${name}" as an alias instead`,
+      );
+    }
   }
 
   const rawAttributes = args["attributes"];
@@ -521,6 +527,8 @@ async function stageCreateEvent(
       ? (rawWhen as { raw: string; normalized?: { chapter?: string; day?: string; hour?: string; order: number } })
       : null;
 
+  const sceneIdArg = typeof args["sceneId"] === "string" ? args["sceneId"] : null;
+
   session.events.push({
     title,
     description: str(args, "description") ?? null,
@@ -533,6 +541,7 @@ async function stageCreateEvent(
     participantNames: arr(args, "participantNames") ?? [],
     involvedObjectNames: arr(args, "involvedObjectNames") ?? [],
     confidence,
+    sceneId: sceneIdArg,
   });
   return ToolOutput.ok(`staged event "${title}"`);
 }

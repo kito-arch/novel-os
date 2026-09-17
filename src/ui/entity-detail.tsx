@@ -1,10 +1,12 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { BASE_KIND_CATALOG } from "@/domain/base-kinds";
 import type { Entity, MediaRef } from "@/domain/entities";
 import type { AttributeValue, EntityType } from "@/domain/entity-types";
 import { fetchJson, studioHeaders } from "./api-client";
+import ConfirmDeleteModal from "./confirm-delete-modal";
 import MediaUpload from "./media-upload";
 
 interface EntityDetailProps {
@@ -22,10 +24,12 @@ function formatValue(value: AttributeValue): string {
 }
 
 export default function EntityDetail({ entity, entityType, storyId, onSaved }: EntityDetailProps) {
+  const router = useRouter();
   const [editing, setEditing] = useState<Record<string, AttributeValue>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [media, setMedia] = useState<MediaRef[]>(entity.media);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const supportsMedia = BASE_KIND_CATALOG[entityType.baseKind].supportsMedia;
   const active = { ...entity.attributes };
@@ -85,12 +89,36 @@ export default function EntityDetail({ entity, entityType, storyId, onSaved }: E
 
   return (
     <div>
-      <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="text-lg font-semibold text-neutral-900">{entity.name}</h2>
-        {entity.aliases.length > 0 && (
-          <span className="text-xs text-neutral-400">aka {entity.aliases.join(", ")}</span>
-        )}
+      <div className="mb-4 flex items-start justify-between gap-2">
+        <div>
+          <h2 className="text-lg font-semibold text-neutral-900">{entity.name}</h2>
+          {entity.aliases.length > 0 && (
+            <span className="text-xs text-neutral-400">aka {entity.aliases.join(", ")}</span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => setConfirmDelete(true)}
+          className="shrink-0 rounded-lg border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50"
+        >
+          Delete
+        </button>
       </div>
+
+      {confirmDelete && (
+        <ConfirmDeleteModal
+          title={`Delete "${entity.name}"?`}
+          description="This cannot be undone. The entity will be removed from the story bible. If it is @mentioned in any scene, deletion will be blocked."
+          onConfirm={async () => {
+            await fetchJson(
+              `/api/stories/${encodeURIComponent(storyId)}/entities/${encodeURIComponent(entity.id)}`,
+              { method: "DELETE", headers: studioHeaders() },
+            );
+            router.push(`/story/${storyId}`);
+          }}
+          onClose={() => setConfirmDelete(false)}
+        />
+      )}
 
       {supportsMedia && (
         <div className="mb-5">

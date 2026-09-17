@@ -45,6 +45,7 @@ export const ProposedEventSchema = z.object({
   participantNames: z.array(z.string()).default([]),
   involvedObjectNames: z.array(z.string()).default([]),
   confidence: ConfidenceSchema,
+  sceneId: z.string().uuid().nullable().default(null),
 });
 export type ProposedEvent = z.infer<typeof ProposedEventSchema>;
 

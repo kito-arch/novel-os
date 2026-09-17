@@ -36,6 +36,20 @@
       "when": 1789500375279,
       "tag": "0004_scenes-updated-at",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1758067200000,
+      "tag": "0005_seed-core-entity-types",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1758153600000,
+      "tag": "0006_events-scene-ref",
+      "breakpoints": true
     }
   ]
 }

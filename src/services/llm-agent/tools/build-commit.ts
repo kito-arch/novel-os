@@ -20,6 +20,7 @@ export interface BuildCommitOptions {
   dictationId: string;
   textChunk: string;
   clock?: () => Date;
+  sceneId?: string | null;
 }
 
 function toAttributeDef(def: ProposedAttributeDef): AttributeDef {
@@ -75,6 +76,7 @@ export class CommitBuilder {
       stagedTypeByName.set(Session.normName(proposed.name), type);
       newEntityTypes.push(type);
     }
+
 
     const resolveType = (name: string): EntityType | null =>
       stagedTypeByName.get(Session.normName(name)) ??
@@ -171,6 +173,7 @@ export class CommitBuilder {
           textChunk: options.textChunk,
           confidence: proposed.confidence,
         },
+        sceneId: proposed.sceneId ?? options.sceneId ?? null,
         createdAt: now(options),
       };
     });

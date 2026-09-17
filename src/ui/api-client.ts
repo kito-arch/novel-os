@@ -19,5 +19,10 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
     }
     throw new Error(message);
   }
+  if (response.status === 204 || response.headers.get("content-length") === "0") {
+    return undefined as T;
+  }
+  const ct = response.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) return undefined as T;
   return (await response.json()) as T;
 }

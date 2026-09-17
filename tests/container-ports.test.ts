@@ -81,6 +81,10 @@ const stubStoryWorldStore: StoryWorldStore = {
   createProseScene: async () => randomUUID(),
   updateProseScene: async () => {},
   deleteProseScene: async () => {},
+  deleteEntity: async () => {},
+  deleteEvent: async () => {},
+  updateEvent: async () => {},
+  createEvent: async () => randomUUID(),
 };
 
 const stubTranscriptStore: TranscriptStore = {

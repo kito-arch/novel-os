@@ -95,6 +95,7 @@ function event(title: string, participantIds: string[], consequences: string[] =
     involvedObjects: [],
     confidence: "inferred",
     provenance: { dictationId: DICTATION_ID, textChunk: "", confidence: "inferred" },
+    sceneId: null,
     createdAt: new Date("2026-01-02T00:00:00Z"),
   };
 }

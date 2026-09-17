@@ -97,6 +97,7 @@ export function runStoryWorldStoreContract(
       involvedObjects: [],
       confidence: "explicit",
       provenance: { dictationId: randomUUID(), textChunk: "they chased", confidence: "explicit" },
+      sceneId: null,
       createdAt: at,
     };
   }

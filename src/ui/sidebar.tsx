@@ -10,6 +10,7 @@ import type { Scene } from "@/domain/scenes";
 import type { StoryWorld } from "@/domain/story-world";
 import { fetchJson, studioHeaders } from "./api-client";
 import ChapterCreateModal from "./chapter-create-modal";
+import ConfirmDeleteModal from "./confirm-delete-modal";
 import EntityCreateModal from "./entity-create-modal";
 import EntityTypeCreateModal from "./entity-type-create-modal";
 
@@ -22,16 +23,35 @@ function ChaptersSection({
   chapters,
   onAddChapter,
   onAddScene,
+  onDeleted,
 }: {
   storyId: string;
   chapters: ChapterWithScenes[];
   onAddChapter: () => void;
   onAddScene: (chapterId: string) => void;
+  onDeleted: () => void;
 }) {
   const [open, setOpen] = useState(true);
+  const [deleteChapterId, setDeleteChapterId] = useState<string | null>(null);
   const pathname = usePathname();
+  const deleteTarget = chapters.find((c) => c.id === deleteChapterId);
 
   return (
+    <>
+    {deleteTarget && (
+      <ConfirmDeleteModal
+        title={`Delete "${deleteTarget.title}"?`}
+        description="All scenes inside this chapter will also be deleted."
+        onConfirm={async () => {
+          await fetch(`/api/stories/${encodeURIComponent(storyId)}/chapters/${encodeURIComponent(deleteTarget.id)}`, {
+            method: "DELETE",
+          });
+          setDeleteChapterId(null);
+          onDeleted();
+        }}
+        onClose={() => setDeleteChapterId(null)}
+      />
+    )}
     <div>
       <div className="flex items-center justify-between rounded-md px-2 py-1">
         <button
@@ -69,14 +89,24 @@ function ChaptersSection({
                   <span className="truncate px-2 py-0.5 text-xs font-medium text-neutral-500">
                     {chapter.title}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onAddScene(chapter.id)}
-                    title="New scene"
-                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-neutral-300 hover:bg-neutral-100 hover:text-neutral-600"
-                  >
-                    +
-                  </button>
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => onAddScene(chapter.id)}
+                      title="New scene"
+                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-neutral-300 hover:bg-neutral-100 hover:text-neutral-600"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteChapterId(chapter.id)}
+                      title="Delete chapter"
+                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-neutral-300 hover:bg-red-50 hover:text-red-500"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
                 <ul className="ml-2 space-y-0.5">
                   {chapter.scenes.length === 0 ? (
@@ -116,6 +146,7 @@ function ChaptersSection({
         </div>
       )}
     </div>
+    </>
   );
 }
 
@@ -354,6 +385,7 @@ export default function Sidebar({ storyId }: { storyId: string }) {
             chapters={chapters}
             onAddChapter={handleAddChapter}
             onAddScene={handleAddScene}
+            onDeleted={() => { refreshRef.current += 1; setRefresh(refreshRef.current); }}
           />
 
           <div className="my-2 border-t border-neutral-100" />

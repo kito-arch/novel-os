@@ -1,13 +1,15 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { Entity } from "@/domain/entities";
 import type { EntityType } from "@/domain/entity-types";
 import type { Scene } from "@/domain/scenes";
 import type { StoryWorld } from "@/domain/story-world";
 import { fetchJson, studioHeaders } from "@/ui/api-client";
+import ConfirmDeleteModal from "@/ui/confirm-delete-modal";
 import EntityDrawer from "@/ui/entity-drawer";
+import { linkEntities } from "@/ui/link-entities";
 import MentionInput from "@/ui/mention-input";
 import SceneRenderer from "@/ui/scene-renderer";
 
@@ -34,8 +36,10 @@ export default function SceneDetailScreen({
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [tab, setTab] = useState<Tab>("edit");
   const [drawerEntityId, setDrawerEntityId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const basePath = `/story/${storyId}`;
+  const router = useRouter();
   const searchParams = useSearchParams();
   const highlightEntityId = searchParams.get("highlight") ?? undefined;
 
@@ -98,20 +102,36 @@ export default function SceneDetailScreen({
 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
 
-  // Append event from the Narrate widget
+  // Append event from the Narrate widget — re-fetch entities first so any
+  // entities created during this narration session are included in linking.
   useEffect(() => {
-    const handler = (e: Event) => {
+    const handler = async (e: Event) => {
       const { sceneId: targetId, text } = (e as CustomEvent<{ sceneId: string; text: string }>).detail;
       if (targetId !== sceneId) return;
+
+      let freshEntities = entities;
+      try {
+        const world = await fetchJson<StoryWorld>(
+          `/api/stories/${encodeURIComponent(storyId)}`,
+          { headers: studioHeaders() },
+        );
+        freshEntities = world.entities;
+        setEntities(world.entities);
+        setEntityTypes(world.entityTypes);
+      } catch {
+        // fall back to cached entities
+      }
+
+      const linked = linkEntities(text, freshEntities);
       setContent((prev) => {
-        const next = prev ? `${prev}\n\n${text}` : text;
+        const next = prev ? `${prev}\n\n${linked}` : linked;
         scheduleSave(title, next);
         return next;
       });
     };
     window.addEventListener("novel-os:scene-append", handler);
     return () => window.removeEventListener("novel-os:scene-append", handler);
-  }, [sceneId, title, scheduleSave]);
+  }, [sceneId, storyId, title, entities, scheduleSave]);
 
   if (loading) return <p className="text-sm text-neutral-400">Loading…</p>;
   if (!scene) {
@@ -135,6 +155,27 @@ export default function SceneDetailScreen({
           ← Story
         </Link>
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+            className="rounded-lg border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50"
+          >
+            Delete scene
+          </button>
+          {confirmDelete && (
+            <ConfirmDeleteModal
+              title="Delete this scene?"
+              description="The scene and all its prose will be permanently removed."
+              onConfirm={async () => {
+                await fetchJson(
+                  `/api/stories/${encodeURIComponent(storyId)}/scenes/${encodeURIComponent(sceneId)}`,
+                  { method: "DELETE", headers: studioHeaders() },
+                );
+                router.push(basePath);
+              }}
+              onClose={() => setConfirmDelete(false)}
+            />
+          )}
           {/* Edit / Preview tabs */}
           <div className="flex rounded-lg border border-neutral-200 p-0.5">
             {(["edit", "preview"] as const).map((t) => (

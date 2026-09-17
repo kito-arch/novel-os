@@ -120,7 +120,7 @@ export class TranscriptProcessor {
     };
   }
 
-  private buildSystemPrompt(world: StoryWorld | null): string {
+  private buildSystemPrompt(world: StoryWorld | null, job?: ExtractionJob): string {
     const registry = world?.entityTypes ?? [];
     const entities = world?.entities ?? [];
     const facts = world?.facts ?? [];
@@ -169,6 +169,8 @@ export class TranscriptProcessor {
       "- Every entity, event, fact, and relationship you stage must trace to the transcript.",
       "- Use confident wording only where the text is explicit; otherwise use implied/inferred.",
       "- Never fictionalize; if the text is silent, do not invent.",
+      "- ENTITY QUALITY: Only create entities for named, recurring, story-significant people, places, or objects. Do NOT create entities for incidental props or background details (a branch, a door, a sound, a bush, a moonlit sky). If something is mentioned once in passing and has no story significance beyond that moment, skip it.",
+      "- ALIAS CONFLICTS: Before creating a new character/entity, check if an existing entity's name or aliases already match any name you intend to use (including the new entity's aliases). If so, use stage_update_entity on the existing entity instead of creating a duplicate.",
       "",
       `BUDGET: at most ${MAX_TOOL_CALLS} tool calls and ${MAX_FETCHES} entity fetches per chunk. get_entities clamps each call to ${Math.min(200, MAX_FETCHES)} rows.`,
       "",
@@ -185,6 +187,15 @@ export class TranscriptProcessor {
       openQuestions || "  (none)",
       "",
       "To finish, call finish() only after staging at least one change. Nothing persists until then.",
+      ...(job?.sceneId
+        ? [
+            "",
+            "CURRENT NARRATION CONTEXT",
+            `- Scene: "${job.sceneTitle ?? "Untitled scene"}" (sceneId: ${job.sceneId})` +
+              (job.chapterTitle ? ` — Chapter: "${job.chapterTitle}"` : ""),
+            "- When staging events with stage_create_event, set sceneId to the value above unless the event clearly belongs to a different scene.",
+          ]
+        : []),
     ].join("\n");
   }
 
@@ -202,7 +213,7 @@ export class TranscriptProcessor {
 
     const { steps } = await generateText({
       model: this.deps.model,
-      system: this.buildSystemPrompt(world),
+      system: this.buildSystemPrompt(world, job),
       prompt: textChunk,
       tools,
       temperature: 0,
@@ -234,6 +245,7 @@ export class TranscriptProcessor {
       ? await CommitBuilder.buildFromStaged(this.deps.store, session, {
           dictationId: job.dictationId,
           textChunk,
+          sceneId: job.sceneId ?? null,
         })
       : null;
 

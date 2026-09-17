@@ -5,6 +5,7 @@ import {
   eq,
   gte,
   inArray,
+  isNull,
   lte,
   or,
   sql,
@@ -141,7 +142,7 @@ export class PostgresStoryWorldStore implements StoryWorldStore {
         this.db
           .select()
           .from(entityTypes)
-          .where(at(entityTypes))
+          .where(or(at(entityTypes), isNull(entityTypes.storyId)))
           .orderBy(asc(entityTypes.revision), asc(entityTypes.createdAt)),
         this.db
           .select()
@@ -722,6 +723,92 @@ export class PostgresStoryWorldStore implements StoryWorldStore {
       .where(and(eq(scenes.id, sceneId), eq(scenes.storyId, storyId)));
   }
 
+  async deleteEntity(storyId: string, entityId: string): Promise<void> {
+    await this.db
+      .delete(entities)
+      .where(and(eq(entities.id, entityId), eq(entities.storyId, storyId)));
+  }
+
+  async deleteEvent(storyId: string, eventId: string): Promise<void> {
+    await this.db
+      .delete(events)
+      .where(and(eq(events.id, eventId), eq(events.storyId, storyId)));
+  }
+
+  async updateEvent(
+    storyId: string,
+    eventId: string,
+    patch: {
+      title?: string;
+      description?: string | null;
+      when?: string | null;
+      settingId?: string | null;
+      sceneId?: string | null;
+      participants?: string[];
+      involvedObjects?: string[];
+      motivation?: string | null;
+      consequences?: string[];
+      confidence?: string;
+    },
+  ): Promise<void> {
+    await this.db
+      .update(events)
+      .set({
+        ...(patch.title !== undefined && { title: patch.title }),
+        ...(patch.description !== undefined && { description: patch.description }),
+        ...(patch.when !== undefined && { whenRaw: patch.when, whenNormalized: null }),
+        ...(patch.settingId !== undefined && { settingId: patch.settingId }),
+        ...(patch.sceneId !== undefined && { sceneId: patch.sceneId }),
+        ...(patch.participants !== undefined && { participants: patch.participants }),
+        ...(patch.involvedObjects !== undefined && { involvedObjects: patch.involvedObjects }),
+        ...(patch.motivation !== undefined && { motivation: patch.motivation }),
+        ...(patch.consequences !== undefined && { consequences: patch.consequences }),
+        ...(patch.confidence !== undefined && { confidence: patch.confidence as typeof events.$inferSelect.confidence }),
+      })
+      .where(and(eq(events.id, eventId), eq(events.storyId, storyId)));
+  }
+
+  async createEvent(
+    storyId: string,
+    data: {
+      title: string;
+      confidence: string;
+      description?: string | null;
+      when?: string | null;
+      settingId?: string | null;
+      sceneId?: string | null;
+      participants?: string[];
+      involvedObjects?: string[];
+      motivation?: string | null;
+      consequences?: string[];
+    },
+  ): Promise<string> {
+    const id = randomUUID();
+    const revision = await this.currentRevision(storyId);
+    await this.db.insert(events).values({
+      id,
+      storyId,
+      title: data.title,
+      description: data.description ?? null,
+      settingId: data.settingId ?? null,
+      sceneId: data.sceneId ?? null,
+      whenRaw: data.when ?? null,
+      whenNormalized: null,
+      motivation: data.motivation ?? null,
+      consequences: data.consequences ?? [],
+      knowledgeGained: [],
+      knowledgeConcealed: [],
+      participants: data.participants ?? [],
+      involvedObjects: data.involvedObjects ?? [],
+      confidence: data.confidence as typeof events.$inferSelect.confidence,
+      provenanceDictationId: null,
+      provenanceText: null,
+      revision,
+      createdAt: this.now(),
+    });
+    return id;
+  }
+
   // --- Helpers ----------------------------------------------------------------
   private async ensureStoryRow(storyId: string): Promise<void> {
     await this.db
@@ -850,6 +937,7 @@ function eventToRow(event: StoryEvent, storyId: string, revision: number) {
     title: event.title,
     description: event.description,
     settingId: event.settingId,
+    sceneId: event.sceneId,
     whenRaw,
     whenNormalized,
     motivation: event.motivation,
@@ -872,6 +960,7 @@ function eventFromRow(row: typeof events.$inferSelect): StoryEvent {
     title: row.title,
     description: row.description,
     settingId: row.settingId,
+    sceneId: row.sceneId ?? null,
     when: whenFromColumns(row.whenRaw, row.whenNormalized),
     motivation: row.motivation,
     consequences: (row.consequences ?? []) as string[],

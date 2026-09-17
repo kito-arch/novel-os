@@ -136,6 +136,7 @@ function buildStarshipCommit(revision = 0): Commit {
         involvedObjects: [],
         confidence: "explicit",
         provenance: { dictationId: DICTATION_ID, textChunk: "trade fire", confidence: "explicit" },
+        sceneId: null,
         createdAt: T0,
       },
     ],

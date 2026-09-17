@@ -115,7 +115,10 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
         {
           method: "POST",
           headers: studioHeaders({ "content-type": "application/json" }),
-          body: JSON.stringify({ text: text.trim() }),
+          body: JSON.stringify({
+            text: text.trim(),
+            ...(currentSceneId ? { sceneId: currentSceneId } : {}),
+          }),
         },
       );
       setText("");

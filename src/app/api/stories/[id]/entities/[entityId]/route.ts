@@ -81,6 +81,38 @@ export async function PATCH(
   return NextResponse.json(updated);
 }
 
+export async function DELETE(
+  _request: NextRequest,
+  ctx: { params: Promise<{ id: string; entityId: string }> },
+): Promise<NextResponse> {
+  const { id: storyId, entityId } = await ctx.params;
+  const store = resolveContainer().get("STORY_WORLD_STORE");
+
+  const entity = await store.getEntity(storyId, entityId);
+  if (!entity) return jsonError(404, "entity not found");
+
+  // Block deletion if the entity is referenced in any scene prose.
+  const [scenes, chapters] = await Promise.all([
+    store.listProseScenes(storyId),
+    store.listChapters(storyId),
+  ]);
+  const referencingScenes = scenes.filter((s) => s.content?.includes(`(${entityId})`));
+  if (referencingScenes.length > 0) {
+    const chapterById = new Map(chapters.map((c) => [c.id, c]));
+    const refs = referencingScenes.map((s) => {
+      const ch = s.chapterId ? chapterById.get(s.chapterId) : undefined;
+      return `"${s.title ?? "Untitled scene"}"${ch ? ` (${ch.title})` : ""}`;
+    });
+    return jsonError(
+      409,
+      `Cannot delete "${entity.name}" — it is referenced in ${refs.length} scene(s): ${refs.join(", ")}. Remove the @mentions first.`,
+    );
+  }
+
+  await store.deleteEntity(storyId, entityId);
+  return new NextResponse(null, { status: 204 });
+}
+
 // Media list sync: entries already on the entity are kept, new entries are
 // attached, and anything absent from the desired list is removed. The response
 // carries store-assigned ids so a subsequent read reflects exactly this list.
