@@ -50,6 +50,13 @@
       "when": 1758153600000,
       "tag": "0006_events-scene-ref",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1758240000000,
+      "tag": "0007_stories-cover-url",
+      "breakpoints": true
     }
   ]
 }

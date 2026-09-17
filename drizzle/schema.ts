@@ -56,6 +56,7 @@ export const stories = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     title: text("title").notNull(),
     synopsis: text("synopsis"),
+    coverUrl: text("cover_url"),
     ownerId: text("owner_id").notNull(),
     storyType: text("story_type"),
     revision: integer("revision").notNull().default(0),

@@ -395,6 +395,7 @@ function SceneGroup({
   editingId,
   setEditingId,
   onDelete,
+  forceOpen,
 }: {
   scene: Scene | null;
   events: StoryEvent[];
@@ -405,9 +406,11 @@ function SceneGroup({
   editingId: string | null;
   setEditingId: (id: string | null) => void;
   onDelete: (e: StoryEvent) => void;
+  forceOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
+  const isOpen = forceOpen || open;
 
   const handleSaved = () => { setEditingId(null); setAdding(false); onChanged(); };
 
@@ -420,7 +423,7 @@ function SceneGroup({
           onClick={() => setOpen((v) => !v)}
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-neutral-100"
         >
-          <Caret open={open} />
+          <Caret open={isOpen} />
         </button>
         {scene ? (
           <Link
@@ -438,14 +441,14 @@ function SceneGroup({
         <button
           type="button"
           onClick={() => { setAdding(true); setOpen(true); }}
-          className="text-xs text-neutral-400 hover:text-neutral-600 px-1"
+          className="flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-0.5 text-xs font-medium text-neutral-600 hover:border-neutral-300 hover:bg-neutral-50"
         >
-          + event
+          <span className="text-[11px] leading-none">+</span> Add event
         </button>
       </div>
 
       {/* Events */}
-      {open && (
+      {isOpen && (
         <div className="ml-5 mt-0.5 border-l border-neutral-100 pl-3">
           {events.map((event) =>
             editingId === event.id ? (
@@ -503,6 +506,7 @@ function ChapterGroup({
   editingId,
   setEditingId,
   onDelete,
+  forceOpen,
 }: {
   chapter: ChapterWithScenes | null;
   scenes: Scene[];
@@ -514,8 +518,10 @@ function ChapterGroup({
   editingId: string | null;
   setEditingId: (id: string | null) => void;
   onDelete: (e: StoryEvent) => void;
+  forceOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
+  const isOpen = forceOpen || open;
   const sceneEventCount = scenes.reduce((n, s) => n + (eventsByScene.get(s.id)?.length ?? 0), 0);
 
   return (
@@ -527,7 +533,7 @@ function ChapterGroup({
           onClick={() => setOpen((v) => !v)}
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-neutral-100"
         >
-          <Caret open={open} />
+          <Caret open={isOpen} />
         </button>
         <span className="flex-1 text-sm font-semibold text-neutral-900">
           {chapter ? chapter.title : "No chapter"}
@@ -539,7 +545,7 @@ function ChapterGroup({
       </div>
 
       {/* Scenes */}
-      {open && (
+      {isOpen && (
         <div className="ml-5 mt-0.5 border-l border-neutral-150 pl-3">
           {scenes.length === 0 && (
             <p className="py-1 text-xs text-neutral-400">No scenes.</p>
@@ -556,6 +562,7 @@ function ChapterGroup({
               editingId={editingId}
               setEditingId={setEditingId}
               onDelete={onDelete}
+              forceOpen={forceOpen}
             />
           ))}
         </div>
@@ -576,6 +583,7 @@ function StoryBibleSection({
   const [chapters, setChapters] = useState<ChapterWithScenes[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<StoryEvent | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     let ignore = false;
@@ -623,12 +631,77 @@ function StoryBibleSection({
   const hasContent = chapters.length > 0 || world.scenes.length > 0 || world.events.length > 0;
   if (!hasContent) return null;
 
+  const sq = searchQuery.trim().toLowerCase();
+
+  // When searching, filter events, scenes, and chapters by the query.
+  const matchingEventIds = sq
+    ? new Set(world.events.filter((e) =>
+        e.title.toLowerCase().includes(sq) ||
+        (e.description ?? "").toLowerCase().includes(sq),
+      ).map((e) => e.id))
+    : null;
+
+  const matchingSceneIds = sq
+    ? new Set(world.scenes.filter((s) =>
+        (s.title ?? "").toLowerCase().includes(sq) ||
+        (s.content ?? "").toLowerCase().includes(sq),
+      ).map((s) => s.id))
+    : null;
+
+  // A chapter matches if its title matches or any of its scenes/events match.
+  const chapterMatches = (chapter: ChapterWithScenes): boolean => {
+    if (chapter.title.toLowerCase().includes(sq)) return true;
+    return chapter.scenes.some(
+      (s) =>
+        matchingSceneIds?.has(s.id) ||
+        (eventsByScene.get(s.id) ?? []).some((e) => matchingEventIds?.has(e.id)),
+    );
+  };
+
+  const visibleChapters = sq ? chapters.filter(chapterMatches) : chapters;
+  const visibleOrphanScenes = orphanScenes.filter(
+    (s) => !sq || matchingSceneIds?.has(s.id) || (eventsByScene.get(s.id) ?? []).some((e) => matchingEventIds?.has(e.id)),
+  );
+  const visibleUnattached = unattachedEvents.filter(
+    (e) => !sq || matchingEventIds?.has(e.id),
+  );
+
   return (
     <section>
-      <h2 className="mb-3 text-lg font-semibold text-neutral-900">Story Bible</h2>
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <h2 className="text-lg font-semibold text-neutral-900">Story Bible</h2>
+        <div className="relative w-56">
+          <svg
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400"
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search events & scenes…"
+            className="w-full rounded-lg border border-neutral-200 bg-white py-1.5 pl-8 pr-7 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400 focus:outline-none"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
       <div className="rounded-xl border border-neutral-200 bg-white px-4 py-2 divide-y divide-neutral-100">
         {/* Chapters */}
-        {chapters.map((chapter) => (
+        {visibleChapters.map((chapter) => (
           <ChapterGroup
             key={chapter.id}
             chapter={chapter}
@@ -641,15 +714,16 @@ function StoryBibleSection({
             editingId={editingId}
             setEditingId={setEditingId}
             onDelete={setDeleteTarget}
+            forceOpen={!!sq}
           />
         ))}
 
         {/* Scenes with no chapter */}
-        {orphanScenes.length > 0 && (
+        {visibleOrphanScenes.length > 0 && (
           <ChapterGroup
             key="__no_chapter__"
             chapter={null}
-            scenes={orphanScenes}
+            scenes={visibleOrphanScenes}
             eventsByScene={eventsByScene}
             storyId={storyId}
             world={world}
@@ -658,15 +732,16 @@ function StoryBibleSection({
             editingId={editingId}
             setEditingId={setEditingId}
             onDelete={setDeleteTarget}
+            forceOpen={!!sq}
           />
         )}
 
         {/* Events with no scene */}
-        {unattachedEvents.length > 0 && (
+        {visibleUnattached.length > 0 && (
           <SceneGroup
             key="__no_scene__"
             scene={null}
-            events={unattachedEvents}
+            events={visibleUnattached}
             storyId={storyId}
             world={world}
             chapters={chapters}
@@ -674,11 +749,12 @@ function StoryBibleSection({
             editingId={editingId}
             setEditingId={setEditingId}
             onDelete={setDeleteTarget}
+            forceOpen={!!sq}
           />
         )}
 
-        {!hasContent && (
-          <p className="py-4 text-sm text-neutral-400">Nothing here yet. Narrate to add chapters, scenes, and events.</p>
+        {sq && visibleChapters.length === 0 && visibleOrphanScenes.length === 0 && visibleUnattached.length === 0 && (
+          <p className="py-4 text-sm text-neutral-400">No results for &ldquo;{searchQuery}&rdquo;</p>
         )}
       </div>
 

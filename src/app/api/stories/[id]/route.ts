@@ -20,8 +20,14 @@ export async function PATCH(
   let body: unknown;
   try { body = await request.json(); } catch { return jsonError(400, "invalid JSON"); }
   if (typeof body !== "object" || body === null) return jsonError(400, "body must be an object");
-  const { title } = body as { title?: string };
-  if (typeof title !== "string" || !title.trim()) return jsonError(400, "title must be a non-empty string");
-  await resolveContainer().get("STORY_WORLD_STORE").updateStoryTitle(id, title.trim());
+  const { title, coverUrl } = body as { title?: string; coverUrl?: string | null };
+  const store = resolveContainer().get("STORY_WORLD_STORE");
+  if (title !== undefined) {
+    if (typeof title !== "string" || !title.trim()) return jsonError(400, "title must be a non-empty string");
+    await store.updateStoryTitle(id, title.trim());
+  }
+  if (coverUrl !== undefined) {
+    await store.updateStoryCover(id, coverUrl ?? null);
+  }
   return NextResponse.json({ ok: true });
 }

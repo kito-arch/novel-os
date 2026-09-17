@@ -10,6 +10,7 @@ import type { Scene } from "./scenes";
 export interface StoryMeta {
   id: string;
   title: string;
+  coverUrl: string | null;
   createdAt: Date;
 }
 

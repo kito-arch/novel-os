@@ -96,7 +96,7 @@ export class MockStoryWorldStore implements StoryWorldStore {
   async createStory(id: string, data: { title: string; ownerId: string }): Promise<void> {
     const existing = this.ownedStories.get(data.ownerId) ?? [];
     if (existing.some((s) => s.id === id)) return;
-    const meta: StoryMeta = { id, title: data.title, createdAt: this.now() };
+    const meta: StoryMeta = { id, title: data.title, coverUrl: null, createdAt: this.now() };
     this.ownedStories.set(data.ownerId, [...existing, meta]);
     this.worlds.set(id, { ...this.createWorld(id), title: data.title });
   }
@@ -151,6 +151,18 @@ export class MockStoryWorldStore implements StoryWorldStore {
   async updateStoryTitle(storyId: string, title: string): Promise<void> {
     const world = this.worlds.get(storyId) ?? this.createWorld(storyId);
     this.worlds.set(storyId, { ...world, title });
+  }
+
+  async updateStoryCover(storyId: string, coverUrl: string | null): Promise<void> {
+    const ownerId = [...this.ownedStories.entries()].find(([, metas]) =>
+      metas.some((m) => m.id === storyId),
+    )?.[0];
+    if (!ownerId) return;
+    const metas = this.ownedStories.get(ownerId) ?? [];
+    this.ownedStories.set(
+      ownerId,
+      metas.map((m) => (m.id === storyId ? { ...m, coverUrl } : m)),
+    );
   }
 
   async upsertEntityType(

@@ -423,11 +423,16 @@ export class PostgresStoryWorldStore implements StoryWorldStore {
 
   async listStories(ownerId: string): Promise<StoryMeta[]> {
     const rows = await this.db
-      .select({ id: stories.id, title: stories.title, createdAt: stories.createdAt })
+      .select({ id: stories.id, title: stories.title, coverUrl: stories.coverUrl, createdAt: stories.createdAt })
       .from(stories)
       .where(eq(stories.ownerId, ownerId))
       .orderBy(sql`${stories.createdAt} DESC`);
-    return rows.map((row) => ({ id: row.id, title: row.title, createdAt: row.createdAt }));
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      coverUrl: row.coverUrl ?? null,
+      createdAt: row.createdAt,
+    }));
   }
 
   async createStory(id: string, data: { title: string; ownerId: string }): Promise<void> {
@@ -442,6 +447,14 @@ export class PostgresStoryWorldStore implements StoryWorldStore {
     await this.db
       .update(stories)
       .set({ title, updatedAt: this.now() })
+      .where(eq(stories.id, storyId));
+  }
+
+  async updateStoryCover(storyId: string, coverUrl: string | null): Promise<void> {
+    await this.ensureStoryRow(storyId);
+    await this.db
+      .update(stories)
+      .set({ coverUrl, updatedAt: this.now() })
       .where(eq(stories.id, storyId));
   }
 
