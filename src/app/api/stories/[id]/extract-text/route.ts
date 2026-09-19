@@ -4,11 +4,9 @@ import { resolveContainer } from "@/server/app-container";
 import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
-// T16.1 — Text-to-extract: same extraction pipeline as audio dictation but no
-// STT hop. The transcript arrives directly from the user's textarea. A dictation
-// row is created for polling (same GET /api/dictations/[id] endpoint), the
-// TranscriptProcessor runs synchronously, and the row is updated to
-// completed/failed before the response is sent.
+// Text-to-extract: same async pipeline as audio dictation but with no STT hop.
+// The transcript arrives directly from the user's textarea, is saved to DB, and
+// an extraction job is enqueued. The client polls status via GET /api/dictations/[id]/stream.
 export async function POST(
   request: NextRequest,
   ctx: { params: Promise<{ id: string }> },
@@ -37,10 +35,9 @@ export async function POST(
   const container = resolveContainer();
   const store = container.get("STORY_WORLD_STORE");
   const transcriptStore = container.get("TRANSCRIPT_STORE");
-  const processor = container.get("TRANSCRIPT_PROCESSOR");
 
   // Resolve scene/chapter context so the LLM can tag events correctly.
-  let resolvedSceneId: string | null = sceneId ?? null;
+  const resolvedSceneId: string | null = sceneId ?? null;
   let resolvedChapterId: string | null = null;
   let resolvedSceneTitle: string | null = null;
   let resolvedChapterTitle: string | null = null;
@@ -61,12 +58,14 @@ export async function POST(
     }
   }
 
+  // Status starts as "pending" (not "processing") so the SSE stream skips the
+  // review stage and waits for the extraction lambda to set "completed".
   const dictationId = await transcriptStore.saveDictation({
     storyId,
     userId,
     transcript,
     wordCount: transcript.split(/\s+/).filter(Boolean).length,
-    status: "processing",
+    status: "pending",
   });
 
   const job: ExtractionJob = {
@@ -79,18 +78,6 @@ export async function POST(
     chapterTitle: resolvedChapterTitle,
   };
 
-  try {
-    const result = await processor.process(job);
-    const summary = result.commitResults[result.commitResults.length - 1] ?? null;
-    await transcriptStore.updateDictation(dictationId, {
-      status: "completed",
-      summary,
-      processedAt: new Date(),
-    });
-  } catch (error) {
-    await transcriptStore.updateDictation(dictationId, { status: "failed" });
-    console.error("[extract-text] extraction failed:", error);
-  }
-
-  return NextResponse.json({ dictationId }, { status: 201 });
+  await container.get("EXTRACTION_QUEUE").enqueue("extraction", job);
+  return NextResponse.json({ dictationId }, { status: 202 });
 }
