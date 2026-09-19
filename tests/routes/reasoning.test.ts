@@ -285,8 +285,8 @@ describe("POST /api/hooks/stt-callback (T12.10)", () => {
     expect(dictation?.transcript).toBe("The Relentless sailed at dawn.");
     expect(dictation?.wordCount).toBe(5);
 
-    const queue = container.get("JOB_QUEUE") as MockJobQueue;
-    const extractionJobs = queue.enqueued.filter((job) => job.jobName === "extraction");
+    const eq = container.get("EXTRACTION_QUEUE") as MockJobQueue;
+    const extractionJobs = eq.enqueued.filter((job) => job.jobName === "extraction");
     expect(extractionJobs).toHaveLength(0);
   });
 });

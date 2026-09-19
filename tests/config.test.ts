@@ -10,7 +10,8 @@ describe("loadConfig", () => {
     expect(config.LLM_STANDARD_MODEL).toBe("gpt-5-mini");
     expect(config.LLM_BEST_MODEL).toBe("gpt-5-pro");
     expect(config.DATABASE_URL).toBeUndefined();
-    expect(config.SQS_QUEUE_URL).toBeUndefined();
+    expect(config.SQS_TRANSCRIPTION_QUEUE_URL).toBeUndefined();
+    expect(config.SQS_EXTRACTION_QUEUE_URL).toBeUndefined();
     expect(config.WEBHOOK_SECRET).toBeUndefined();
   });
 
@@ -22,13 +23,15 @@ describe("loadConfig", () => {
       LLM_API_KEY: "llm-key",
       DATABASE_URL: "postgresql://user:pass@localhost:5432/novelos",
       AWS_REGION: "us-east-1",
-      SQS_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/123456789012/novelos-extraction",
+      SQS_TRANSCRIPTION_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/123456789012/novelos-transcription",
+      SQS_EXTRACTION_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/123456789012/novelos-extraction",
       WEBHOOK_SECRET: "sup3r-secret",
     });
     expect(config.STT_PROVIDER).toBe("assemblyai");
     expect(config.LLM_PROVIDER).toBe("openai");
     expect(config.DATABASE_URL).toBe("postgresql://user:pass@localhost:5432/novelos");
-    expect(config.SQS_QUEUE_URL).toContain("novelos-extraction");
+    expect(config.SQS_TRANSCRIPTION_QUEUE_URL).toContain("novelos-transcription");
+    expect(config.SQS_EXTRACTION_QUEUE_URL).toContain("novelos-extraction");
     expect(config.WEBHOOK_SECRET).toBe("sup3r-secret");
   });
 

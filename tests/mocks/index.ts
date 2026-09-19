@@ -1,3 +1,4 @@
+export { MockAudioStorage } from "./audio-storage";
 export { MockClock } from "./clock";
 export { MockLlm, createMockLlm, mockLlm } from "./llm";
 export type { MockLlmOptions } from "./llm";

@@ -5,6 +5,7 @@ import type { TypedContainer } from "@evyweb/ioctopus";
 import { setTestContainer, resetTestContainer } from "@/server/app-container";
 import { POST as createDictation } from "@/app/api/dictations/route";
 import { GET as getDictation } from "@/app/api/dictations/[id]/route";
+import { MockJobQueue } from "../mocks";
 import { setup } from "./fixtures";
 
 const STORY_ID = "fc4c55da-65b5-401d-812a-eff0cc6ef001";
@@ -38,27 +39,34 @@ describe("POST /api/dictations (T12.1)", () => {
     expect(await response.json()).toMatchObject({ error: expect.any(String) });
   });
 
-  it("uploads a dictation, attributes the user from the header, and returns the provider job id", async () => {
+  it("saves audio, creates a pending dictation, and enqueues a transcription job", async () => {
     const response = await createDictation(audioForm(STORY_ID, "Sarah boarded the Relentless."));
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.jobId).toBeTruthy();
     expect(body.dictationId).toBeTruthy();
+    // providerJobId is set by the transcription worker, not the HTTP route
+    expect(body.jobId).toBeUndefined();
 
     const dictation = await container.get("TRANSCRIPT_STORE").getDictation(body.dictationId);
     expect(dictation?.userId).toBe("u1");
     expect(dictation?.storyId).toBe(STORY_ID);
-    expect(dictation?.providerJobId).toBe(body.jobId);
     expect(dictation?.status).toBe("pending");
+    expect(dictation?.providerJobId).toBeNull();
+
+    const tq = container.get("TRANSCRIPTION_QUEUE") as MockJobQueue;
+    expect(tq.enqueued).toHaveLength(1);
+    expect(tq.enqueued[0]?.jobName).toBe("transcription");
   });
 
-  it("uses a clean webhook URL with no query params", async () => {
+  it("passes a clean webhook URL (no query params) inside the transcription job", async () => {
     const response = await createDictation(audioForm(STORY_ID, "hello"));
     expect(response.status).toBe(200);
-    const { jobId } = await response.json();
-    // The mock ignores webhook details; the point is the route never passes a
-    // query-param-laden callback. Assert the dictation got the job id back.
-    expect(jobId).toBeTruthy();
+    const { dictationId } = await response.json();
+    expect(dictationId).toBeTruthy();
+
+    const tq = container.get("TRANSCRIPTION_QUEUE") as MockJobQueue;
+    const job = tq.enqueued[0]?.data as { webhookUrl?: string };
+    expect(job?.webhookUrl).toMatch(/^https?:\/\/[^?]+\/api\/hooks\/stt-callback$/);
   });
 
   it("rejects a missing audio file", async () => {

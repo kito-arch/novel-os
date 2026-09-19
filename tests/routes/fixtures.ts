@@ -8,7 +8,7 @@ import type { Entity } from "@/domain/entities";
 import { createAppModule } from "@/container";
 import { loadConfig, type EnvVars } from "@/config";
 import type { SpeechToText } from "@/container/stt";
-import { MockJobQueue, MockLlm, MockStoryWorldStore, MockStt, MockTranscriptStore } from "../mocks";
+import { MockAudioStorage, MockJobQueue, MockLlm, MockStoryWorldStore, MockStt, MockTranscriptStore } from "../mocks";
 import { askStory } from "@/services/reasoning/ask";
 import { doesEntityKnow } from "@/services/reasoning/knowledge";
 import { checkContinuity } from "@/services/reasoning/continuity";
@@ -111,7 +111,9 @@ export async function setup(opts?: SetupOptions): Promise<FixtureWorld> {
   container.bind("TRANSCRIPT_STORE").toValue(new MockTranscriptStore());
   container.bind("LLM").toValue(llm);
   container.bind("STT").toValue(opts?.stt ?? new MockStt());
-  container.bind("JOB_QUEUE").toValue(new MockJobQueue());
+  container.bind("AUDIO_STORAGE").toValue(new MockAudioStorage());
+  container.bind("TRANSCRIPTION_QUEUE").toValue(new MockJobQueue());
+  container.bind("EXTRACTION_QUEUE").toValue(new MockJobQueue());
   container.bind("ASK_STORY").toFactory(
     (resolve) => (sid: string, question: string) =>
       askStory({ store: resolve("STORY_WORLD_STORE"), llm: resolve("LLM") }, sid, question),

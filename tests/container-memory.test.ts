@@ -41,7 +41,8 @@ describe("Phase 4 composition root", () => {
     expect(a).not.toBe(b);
     expect(a.get("STORY_WORLD_STORE")).not.toBe(b.get("STORY_WORLD_STORE"));
     expect(a.get("TRANSCRIPT_STORE")).not.toBe(b.get("TRANSCRIPT_STORE"));
-    expect(a.get("JOB_QUEUE")).not.toBe(b.get("JOB_QUEUE"));
+    expect(a.get("TRANSCRIPTION_QUEUE")).not.toBe(b.get("TRANSCRIPTION_QUEUE"));
+    expect(a.get("EXTRACTION_QUEUE")).not.toBe(b.get("EXTRACTION_QUEUE"));
     expect(a.get("LLM")).not.toBe(b.get("LLM"));
   });
 
@@ -65,7 +66,8 @@ describe("Phase 4 composition root", () => {
     // Adapters that have not shipped resolve to phase-referencing errors.
     expect(() => container.get("STT")).toThrow(/AssemblyAI/);
     expect(() => container.get("LLM")).toThrow(/Phase 9/);
-    expect(() => container.get("JOB_QUEUE")).toThrow(/SQS/);
+    expect(() => container.get("TRANSCRIPTION_QUEUE")).toThrow(/SQS_TRANSCRIPTION_QUEUE_URL/);
+    expect(() => container.get("EXTRACTION_QUEUE")).toThrow(/SQS_EXTRACTION_QUEUE_URL/);
   });
 
   it("wires the OpenAI LlmClient adapter when LLM_PROVIDER=openai (T9)", () => {
@@ -97,27 +99,29 @@ describe("Phase 4 composition root", () => {
     expect(typeof stt.getTranscript).toBe("function");
   });
 
-  it("wires the SQS JobQueue adapter when SQS_QUEUE_URL is set (T11)", () => {
+  it("wires SqsJobQueue adapters when queue URLs are set (T11)", () => {
     const container = buildContainer(
       loadConfig({
         DATABASE_URL: "postgres://localhost:5432/novelos_test",
         LLM_PROVIDER: "mock",
-        SQS_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/123/novelos-extraction",
+        SQS_TRANSCRIPTION_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/123/novelos-transcription",
+        SQS_EXTRACTION_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/123/novelos-extraction",
         AWS_REGION: "us-east-1",
       }),
     );
-    const queue: JobQueue = container.get("JOB_QUEUE");
-    expect(typeof queue.enqueue).toBe("function");
-    expect(typeof queue.onJobCompleted).toBe("function");
-    expect(typeof queue.onJobFailed).toBe("function");
-    expect(typeof queue.getStatus).toBe("function");
+    const tq: JobQueue = container.get("TRANSCRIPTION_QUEUE");
+    const eq: JobQueue = container.get("EXTRACTION_QUEUE");
+    expect(typeof tq.enqueue).toBe("function");
+    expect(typeof eq.enqueue).toBe("function");
+    expect(tq).not.toBe(eq);
   });
 
   it("supports typed registry resolution for every port token", () => {
     const config: AppRegistry["CONFIG"] = loadConfig({ LLM_PROVIDER: "mock" });
     const container = buildMemoryContainer();
     expect(container.get("CLOCK").now()).toBeInstanceOf(Date);
-    expect(typeof container.get("JOB_QUEUE").enqueue).toBe("function");
+    expect(typeof container.get("TRANSCRIPTION_QUEUE").enqueue).toBe("function");
+    expect(typeof container.get("EXTRACTION_QUEUE").enqueue).toBe("function");
     expect(typeof container.get("LLM").complete).toBe("function");
     expect(typeof container.get("STT").submitTranscription).toBe("function");
     expect(config.LLM_CHEAP_MODEL).toBe("gpt-5-nano");

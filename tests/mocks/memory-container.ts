@@ -7,6 +7,7 @@ import { loadConfig } from "@/config";
 import { askStory } from "@/services/reasoning/ask";
 import { checkContinuity } from "@/services/reasoning/continuity";
 import { doesEntityKnow } from "@/services/reasoning/knowledge";
+import { MockAudioStorage } from "./audio-storage";
 import { MockJobQueue } from "./job-queue";
 import { MockLlm } from "./llm";
 import { MockStt } from "./stt";
@@ -21,9 +22,11 @@ export function buildMemoryContainer(): TypedContainer<AppRegistry> {
   container.bind("CLOCK").toClass(SystemClock);
   container.bind("STT").toClass(MockStt);
   container.bind("LLM").toClass(MockLlm);
+  container.bind("AUDIO_STORAGE").toClass(MockAudioStorage);
   container.bind("STORY_WORLD_STORE").toClass(MockStoryWorldStore);
   container.bind("TRANSCRIPT_STORE").toClass(MockTranscriptStore);
-  container.bind("JOB_QUEUE").toClass(MockJobQueue);
+  container.bind("TRANSCRIPTION_QUEUE").toClass(MockJobQueue);
+  container.bind("EXTRACTION_QUEUE").toClass(MockJobQueue);
   container.bind("TRANSCRIPT_PROCESSOR").toFactory(() => {
     throw new NotImplementedError(
       "TRANSCRIPT_PROCESSOR is not available in the memory container. " +

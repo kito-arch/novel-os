@@ -114,14 +114,17 @@ describe("container registry (Phase 2 ports)", () => {
     container.bind("LLM").toValue(stubLlm);
     container.bind("STORY_WORLD_STORE").toValue(stubStoryWorldStore);
     container.bind("TRANSCRIPT_STORE").toValue(stubTranscriptStore);
-    container.bind("JOB_QUEUE").toValue(stubJobQueue);
+    container.bind("TRANSCRIPTION_QUEUE").toValue(stubJobQueue);
+    container.bind("EXTRACTION_QUEUE").toValue(stubJobQueue);
+    container.bind("AUDIO_STORAGE").toValue({ save: async () => ({ url: "/u", key: "k" }), loadBuffer: async () => Buffer.alloc(0) });
 
     expect(container.get("CLOCK")).toBe(stubClock);
     expect(container.get("STT")).toBe(stubStt);
     expect(container.get("LLM")).toBe(stubLlm);
     expect(container.get("STORY_WORLD_STORE")).toBe(stubStoryWorldStore);
     expect(container.get("TRANSCRIPT_STORE")).toBe(stubTranscriptStore);
-    expect(container.get("JOB_QUEUE")).toBe(stubJobQueue);
+    expect(container.get("TRANSCRIPTION_QUEUE")).toBe(stubJobQueue);
+    expect(container.get("EXTRACTION_QUEUE")).toBe(stubJobQueue);
   });
 
   it("port types are importable from @/container (registry acceptance)", () => {
