@@ -121,73 +121,36 @@ export class TranscriptProcessor {
   }
 
   private buildSystemPrompt(world: StoryWorld | null, job?: ExtractionJob): string {
-    const registry = world?.entityTypes ?? [];
-    const entities = world?.entities ?? [];
-    const facts = world?.facts ?? [];
-
-    const registryLines = registry.length
-      ? registry
-          .map(
-            (type) =>
-              `  - ${type.name} (${type.baseKind})` +
-              (type.attributeDefs.length
-                ? ` attributes: ${type.attributeDefs.map((def) => `${def.key}${def.required ? "*" : ""} (${def.kind})`).join(", ")}`
-                : ""),
-          )
-          .join("\n")
-      : "  (none registered yet)";
-
-    const entityCount = entities.length;
-    const sampleEntities = entities
-      .slice(0, 40)
-      .map((entity) => {
-        const type = registry.find((t) => t.id === entity.entityTypeId)?.name ?? entity.entityTypeId;
-        return `    - ${entity.name} (${type})${entity.aliases.length ? ` aliases: ${entity.aliases.join(", ")}` : ""}`;
-      })
-      .join("\n");
-
-    const activeFacts = facts
-      .filter((fact) => fact.supersededBy === null)
-      .slice(0, 25)
-      .map((fact) => `    - ${fact.subject} ${fact.predicate}${fact.objectValue ? ` ${JSON.stringify(fact.objectValue)}` : ""}`)
-      .join("\n");
+    const typeCount = world?.entityTypes.length ?? 0;
+    const entityCount = world?.entities.length ?? 0;
 
     const openQuestions = (world?.openQuestions ?? [])
-      .filter((question) => !question.isResolved)
+      .filter((q) => !q.isResolved)
       .slice(0, 10)
-      .map((question) => `    - ${question.question}`)
+      .map((q) => `  - ${q.question}`)
       .join("\n");
 
     return [
-      `You are the story extraction agent for the world "${world?.title ?? "Untitled story"}" (${registry.length} entity types, ${entityCount} entities).`,
+      `You are the story extraction agent for the world "${world?.title ?? "Untitled story"}" (${typeCount} entity types, ${entityCount} entities).`,
       "",
       "The user message is a chapter transcript chunk. Extract the story knowledge it adds.",
       "",
       "RULES",
-      "- Read the registry first (list_entity_types) before staging entities or events.",
+      "- Call list_entity_types first to see the full type registry before staging entities or events.",
+      "- Use get_entities to look up existing entities of a type before creating new ones (check for alias conflicts).",
+      "- Use list_facts(query) to check or retrieve existing facts; it also returns fact ids for supersede_fact.",
       "- Staged writes (stage_*) do NOT persist until you call finish(). You may create types, then entities of those types, in the same session.",
       "- Every entity, event, fact, and relationship you stage must trace to the transcript.",
       "- Use confident wording only where the text is explicit; otherwise use implied/inferred.",
       "- Never fictionalize; if the text is silent, do not invent.",
       "- ENTITY QUALITY: Only create entities for named, recurring, story-significant people, places, or objects. Do NOT create entities for incidental props or background details (a branch, a door, a sound, a bush, a moonlit sky). If something is mentioned once in passing and has no story significance beyond that moment, skip it.",
-      "- ALIAS CONFLICTS: Before creating a new character/entity, check if an existing entity's name or aliases already match any name you intend to use (including the new entity's aliases). If so, use stage_update_entity on the existing entity instead of creating a duplicate.",
+      "- ALIAS CONFLICTS: Before creating a new entity, call get_entities to check if an existing entity's name or aliases already match. If so, use stage_update_entity instead of creating a duplicate.",
       "- DIALOGUE: When the transcript contains direct speech without quotation marks (e.g. \"Richard said let's play together\"), treat it as direct dialogue and use proper double quotes in any fact, event, or knowledge you stage (e.g. Richard said \"let's play together\").",
       "",
       `BUDGET: at most ${MAX_TOOL_CALLS} tool calls and ${MAX_FETCHES} entity fetches per chunk. get_entities clamps each call to ${Math.min(200, MAX_FETCHES)} rows.`,
       "",
-      "ENTITY TYPE REGISTRY",
-      registryLines,
-      "",
-      `ENTITIES (${entities.length}${entities.length > 40 ? ", showing first 40" : ""})`,
-      sampleEntities || "  (none yet)",
-      "",
-      "ACTIVE FACTS (first 25)",
-      activeFacts || "  (none yet)",
-      "",
       "OPEN QUESTIONS (resolve any answered here via stage_resolve_open_question)",
       openQuestions || "  (none)",
-      "",
-      "To finish, call finish() only after staging at least one change. Nothing persists until then.",
       ...(job?.sceneId
         ? [
             "",
@@ -197,6 +160,8 @@ export class TranscriptProcessor {
             "- When staging events with stage_create_event, set sceneId to the value above unless the event clearly belongs to a different scene.",
           ]
         : []),
+      "",
+      "To finish, call finish() only after staging at least one change. Nothing persists until then.",
     ].join("\n");
   }
 

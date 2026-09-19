@@ -13,6 +13,7 @@ import {
   TOOL_GET_ENTITIES,
   TOOL_GET_ENTITY,
   TOOL_LIST_ENTITY_TYPES,
+  TOOL_LIST_FACTS,
   TOOL_QUERY_EVENTS,
   TOOL_STAGE_CREATE_ENTITY,
   TOOL_STAGE_CREATE_ENTITY_TYPE,
@@ -328,6 +329,37 @@ async function queryEvents(
       participants: event.participants,
       confidence: event.confidence,
     })),
+  });
+}
+
+async function listFacts(
+  store: StoryWorldStore,
+  session: ExtractionSession,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const world = await getWorld(store, session.storyId);
+  const active = listActiveFacts(world?.facts ?? []);
+  const query = str(args, "query");
+  const limit = clampLimit(num(args, "limit") ?? 25);
+
+  let rows = active;
+  if (query) {
+    const needle = Session.normName(query);
+    rows = active.filter((f) =>
+      Session.normName(`${f.subject} ${f.predicate} ${f.objectValue ?? ""}`).includes(needle),
+    );
+  }
+  rows = rows.slice(0, limit);
+
+  return ToolOutput.ok(`active facts: ${rows.length} (total active: ${active.length})`, {
+    facts: rows.map((f) => ({
+      id: f.id,
+      subject: f.subject,
+      predicate: f.predicate,
+      objectValue: f.objectValue,
+      confidence: f.confidence,
+    })),
+    total: active.length,
   });
 }
 
@@ -750,6 +782,8 @@ export class StoryToolExecutor {
         return getEntity(store, session, args);
       case TOOL_QUERY_EVENTS:
         return queryEvents(store, session, args);
+      case TOOL_LIST_FACTS:
+        return listFacts(store, session, args);
       case TOOL_STAGE_CREATE_ENTITY_TYPE:
         return stageCreateEntityType(store, session, args);
       case TOOL_STAGE_CREATE_ENTITY:

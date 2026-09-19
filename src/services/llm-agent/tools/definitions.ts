@@ -13,6 +13,7 @@ export const TOOL_LIST_ENTITY_TYPES = "list_entity_types";
 export const TOOL_GET_ENTITIES = "get_entities";
 export const TOOL_GET_ENTITY = "get_entity";
 export const TOOL_QUERY_EVENTS = "query_events";
+export const TOOL_LIST_FACTS = "list_facts";
 
 // Staged writes: nothing persists until finish/commit.
 export const TOOL_STAGE_CREATE_ENTITY_TYPE = "stage_create_entity_type";
@@ -32,6 +33,7 @@ export const READ_TOOLS: readonly string[] = [
   TOOL_GET_ENTITIES,
   TOOL_GET_ENTITY,
   TOOL_QUERY_EVENTS,
+  TOOL_LIST_FACTS,
 ];
 
 export const STAGED_WRITE_TOOLS: readonly string[] = [
@@ -93,6 +95,23 @@ const attributeValuesSchema = z.record(z.string(), z.unknown());
 // These are the single source of truth for the AI SDK tools (zodSchema →
 // inputSchema) and for any callers that validate arguments themselves.
 export const STORY_TOOL_CATALOG: Record<StoryToolName, StoryToolDefinition> = {
+  [TOOL_LIST_FACTS]: {
+    description:
+      "Fetch active (non-superseded) facts. Use query to filter by subject, predicate, or object text. Returns fact ids needed for supersede_fact.",
+    inputSchema: z
+      .object({
+        storyId: z.string().describe("Story the facts belong to."),
+        query: z
+          .string()
+          .describe("Optional case-insensitive substring match on subject, predicate, or object.")
+          .optional(),
+        limit: z
+          .number()
+          .describe(`Max facts to return (default 25, max ${MAX_LIMIT}).`)
+          .optional(),
+      })
+      .strict(),
+  },
   [TOOL_LIST_ENTITY_TYPES]: {
     description: "List the story's entity type registry, including just-staged types.",
     inputSchema: z
@@ -290,6 +309,7 @@ export type StoryToolName =
   | typeof TOOL_GET_ENTITIES
   | typeof TOOL_GET_ENTITY
   | typeof TOOL_QUERY_EVENTS
+  | typeof TOOL_LIST_FACTS
   | typeof TOOL_STAGE_CREATE_ENTITY_TYPE
   | typeof TOOL_STAGE_CREATE_ENTITY
   | typeof TOOL_STAGE_UPDATE_ENTITY
