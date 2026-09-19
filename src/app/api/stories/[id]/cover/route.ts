@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
 import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
-import { defaultMediaStorage } from "@/server/media-storage";
+import { defaultMediaStorage, resolveMediaUrl } from "@/server/media-storage";
 
 export async function POST(
   request: NextRequest,
@@ -17,13 +17,13 @@ export async function POST(
   if (!(file instanceof File)) return jsonError(400, "file required (field name: file)");
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  const url = await defaultMediaStorage.save(buffer, file.name || "cover.bin", {
+  const key = await defaultMediaStorage.save(buffer, file.name || "cover.bin", {
     userId: guard.userId,
     storyId,
   });
 
-  await resolveContainer().get("STORY_WORLD_STORE").updateStoryCover(storyId, url);
-  return NextResponse.json({ url });
+  await resolveContainer().get("STORY_WORLD_STORE").updateStoryCover(storyId, key);
+  return NextResponse.json({ url: await resolveMediaUrl(key) });
 }
 
 export async function DELETE(

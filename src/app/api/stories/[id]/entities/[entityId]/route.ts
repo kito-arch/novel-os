@@ -6,6 +6,7 @@ import type { StoryWorldStore } from "@/container/story-world-store";
 import { resolveContainer } from "@/server/app-container";
 import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
+import { resolveMediaUrl } from "@/server/media-storage";
 
 interface EntityPatchBody {
   attributes?: Record<string, AttributeValue>;
@@ -81,7 +82,11 @@ export async function PATCH(
   });
 
   const updated = await store.getEntity(storyId, entityId);
-  return NextResponse.json(updated);
+  if (!updated) return jsonError(404, "entity not found");
+  const media = await Promise.all(
+    updated.media.map(async (m) => ({ ...m, url: (await resolveMediaUrl(m.url)) ?? m.url })),
+  );
+  return NextResponse.json({ ...updated, media });
 }
 
 export async function DELETE(

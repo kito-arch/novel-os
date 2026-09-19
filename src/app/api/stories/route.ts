@@ -2,12 +2,16 @@ import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
 import { requireAuth } from "@/server/auth";
 import { jsonError } from "@/server/http";
+import { resolveMediaUrl } from "@/server/media-storage";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
   const stories = await resolveContainer().get("STORY_WORLD_STORE").listStories(auth.userId);
-  return NextResponse.json(stories);
+  const resolved = await Promise.all(
+    stories.map(async (s) => ({ ...s, coverUrl: await resolveMediaUrl(s.coverUrl) })),
+  );
+  return NextResponse.json(resolved);
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {

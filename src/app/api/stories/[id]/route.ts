@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { resolveContainer } from "@/server/app-container";
 import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
+import { resolveMediaUrl } from "@/server/media-storage";
 
 export async function GET(
   request: NextRequest,
@@ -12,7 +13,15 @@ export async function GET(
   if (guard instanceof NextResponse) return guard;
   const world = await resolveContainer().get("STORY_WORLD_STORE").getWorld(id);
   if (!world) return jsonError(404, "story not found");
-  return NextResponse.json(world);
+  const entities = await Promise.all(
+    world.entities.map(async (entity) => ({
+      ...entity,
+      media: await Promise.all(
+        entity.media.map(async (m) => ({ ...m, url: (await resolveMediaUrl(m.url)) ?? m.url })),
+      ),
+    })),
+  );
+  return NextResponse.json({ ...world, entities });
 }
 
 export async function PATCH(

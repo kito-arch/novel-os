@@ -80,8 +80,7 @@ export class S3AudioStorage implements AudioStorage {
         ContentType: mimeType || "application/octet-stream",
       }),
     );
-    // Reuse the same /api/media proxy that images use — ownership is verified there.
-    return { url: `/api/media/${key}`, key };
+    return { url: key, key };
   }
 
   async loadBuffer(key: string): Promise<Buffer> {

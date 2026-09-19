@@ -6,7 +6,7 @@ import { resolveContainer } from "@/server/app-container";
 import { storyGuard } from "@/server/auth";
 import { jsonError } from "@/server/http";
 import type { MediaStorage } from "@/server/media-storage";
-import { defaultMediaStorage } from "@/server/media-storage";
+import { defaultMediaStorage, resolveMediaUrl } from "@/server/media-storage";
 
 // T12.9 — Upload media for an entity. multipart/form-data: `file` + `role`
 // (portrait | gallery) + optional `caption`. Abstract base kinds are text-only
@@ -60,7 +60,7 @@ export async function handle(
     if (current) await store.removeMedia(entityId, current.id);
   }
 
-  const url = await storage.save(buffer, file.name || `${role}.bin`, { userId, storyId });
-  const mediaId = await store.attachMedia(entityId, { url, role, caption });
-  return NextResponse.json({ id: mediaId, url, role, caption });
+  const key = await storage.save(buffer, file.name || `${role}.bin`, { userId, storyId });
+  const mediaId = await store.attachMedia(entityId, { url: key, role, caption });
+  return NextResponse.json({ id: mediaId, url: await resolveMediaUrl(key), role, caption });
 }

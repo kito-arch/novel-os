@@ -10,10 +10,9 @@ export interface S3MediaStorageOptions {
   client?: S3Client;
 }
 
-// Stores media files in S3 under {storyId}/{uuid}{ext}. The returned URL is
-// the backend proxy path /api/media/{storyId}/{uuid}{ext} — the client always
-// goes through that endpoint which verifies ownership before issuing a
-// pre-signed redirect, so cross-user access is impossible even with a guessed URL.
+// Stores media files in S3 under {storyId}/{uuid}{ext}. Returns the raw S3
+// key so the DB stores a storage-agnostic path. Callers use resolveMediaUrl()
+// from @/server/media-storage to presign the key before sending it to clients.
 export class S3MediaStorage {
   private readonly bucket: string;
   private readonly client: S3Client;
@@ -45,7 +44,7 @@ export class S3MediaStorage {
         ContentType: extToMime(ext),
       }),
     );
-    return `/api/media/${key}`;
+    return key;
   }
 }
 

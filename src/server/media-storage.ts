@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { S3MediaStorage } from "@/adapters/s3/media-storage";
 import { loadConfig } from "@/config";
 
@@ -60,3 +62,26 @@ export function getMediaStorage(): MediaStorage {
 export const defaultMediaStorage: MediaStorage = {
   save: (buffer, name, meta) => getMediaStorage().save(buffer, name, meta),
 };
+
+// Resolves a stored media key to a URL the client can use directly.
+// - Local public paths (starting with /) are returned unchanged.
+// - Legacy /api/media/ proxy paths written before this refactor are unwrapped
+//   to their S3 key and presigned.
+// - Raw S3 keys are presigned with a 1-hour expiry.
+// - When S3 is not configured (dev/test without a bucket) the key is returned
+//   as-is so local paths still work and tests don't need real AWS credentials.
+export async function resolveMediaUrl(key: string | null): Promise<string | null> {
+  if (!key) return null;
+  const legacyPrefix = "/api/media/";
+  if (key.startsWith(legacyPrefix)) return resolveMediaUrl(key.slice(legacyPrefix.length));
+  if (key.startsWith("/")) return key;
+  const config = loadConfig();
+  if (!config.S3_BUCKET) return key;
+  const client = new S3Client({
+    region: config.AWS_REGION ?? "us-east-1",
+    ...(config.AWS_ACCESS_KEY_ID && config.AWS_SECRET_ACCESS_KEY
+      ? { credentials: { accessKeyId: config.AWS_ACCESS_KEY_ID, secretAccessKey: config.AWS_SECRET_ACCESS_KEY } }
+      : {}),
+  });
+  return getSignedUrl(client, new GetObjectCommand({ Bucket: config.S3_BUCKET, Key: key }), { expiresIn: 3600 });
+}
