@@ -173,7 +173,7 @@ interface SceneRendererProps {
   onEntityClick?: (entityId: string) => void;
 }
 
-export default function SceneRenderer({ content, storyId, entities, entityTypes, highlightEntityId, onEntityClick }: SceneRendererProps) {
+export default function SceneRenderer({ content, entities, entityTypes, highlightEntityId, onEntityClick }: SceneRendererProps) {
   if (!content.trim()) {
     return (
       <p className="font-serif text-[17px] italic text-neutral-300">

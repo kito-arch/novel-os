@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import type { Entity } from "@/domain/entities";
@@ -149,8 +149,8 @@ export default function MentionInput({
   const [hoverState, setHoverState] = useState<{ entity: Entity; rect: DOMRect } | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const entityById = new Map(entities.map((e) => [e.id, e]));
-  const typeById = new Map(entityTypes.map((t) => [t.id, t]));
+  const entityById = useMemo(() => new Map(entities.map((e) => [e.id, e])), [entities]);
+  const typeById = useMemo(() => new Map(entityTypes.map((t) => [t.id, t])), [entityTypes]);
 
   // ── Initialise & sync external value changes ──
   useEffect(() => {

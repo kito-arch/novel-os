@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -97,10 +98,11 @@ function BookCover({
         />
         {/* Cover */}
         {story.coverUrl ? (
-          <img
+          <Image
             src={story.coverUrl}
             alt={story.title}
-            className="h-full w-full object-cover"
+            fill
+            className="object-cover"
             draggable={false}
           />
         ) : (
