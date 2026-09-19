@@ -46,3 +46,6 @@ next-env.d.ts
 *.tfstate
 *.tfstate.backup
 *.tfvars
+
+# Lambda build output
+/dist/

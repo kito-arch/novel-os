@@ -12,7 +12,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "dotenv -- tsx drizzle/migrate.mts",
     "db:studio": "drizzle-kit studio",
-    "worker": "tsx workers/index.ts"
+    "build:lambda": "esbuild workers/transcription-lambda.ts workers/extraction-lambda.ts --bundle --platform=node --target=node20 --outdir=dist --tsconfig=tsconfig.json"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.53",
