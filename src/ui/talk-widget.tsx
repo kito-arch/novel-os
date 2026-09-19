@@ -55,55 +55,111 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
   const [extractResult, setExtractResult] = useState<string | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streamRef = useRef<EventSource | null>(null);
 
   const currentSceneId = sceneIdFromPath(pathname);
 
-  const clearPoll = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
+  const closeStream = () => {
+    if (streamRef.current) {
+      streamRef.current.close();
+      streamRef.current = null;
     }
   };
 
-  useEffect(() => () => clearPoll(), []);
+  useEffect(() => () => closeStream(), []);
 
-  const poll = (dictationId: string) => {
-    const tick = async () => {
+  type StreamEvent =
+    | { status: "pending" }
+    | { status: "processing"; transcript: string }
+    | { status: "completed"; transcript: string | null; wordCount: number | null; summary: string | null }
+    | { status: "failed" }
+    | { error: string };
+
+  const startStream = (dictationId: string, duringExtraction = false) => {
+    closeStream();
+    const es = new EventSource(`/api/dictations/${encodeURIComponent(dictationId)}/stream`);
+    streamRef.current = es;
+
+    es.onmessage = (event: MessageEvent) => {
+      let data: StreamEvent;
       try {
-        const status = await fetchJson<DictationStatus>(
-          `/api/dictations/${encodeURIComponent(dictationId)}`,
-          {  },
-        );
-
-        // Transcript ready but extraction not yet triggered — show review UI.
-        if (status.status === "processing" && status.transcript) {
-          clearPoll();
-          setReviewText(status.transcript);
-          setExtractResult(null);
-          setExtractError(null);
-          setAppended(false);
-          setStage({ kind: "review", id: dictationId, transcript: status.transcript });
-          return;
-        }
-
-        setStage({ kind: "active", id: dictationId, status });
-        if (status.status === "completed" || status.status === "failed") {
-          clearPoll();
-          if (status.status === "completed") emitWorldChanged(storyId);
-        }
-      } catch (err) {
-        clearPoll();
-        setStage({ kind: "error", message: (err as Error).message });
+        data = JSON.parse(event.data as string) as StreamEvent;
+      } catch {
+        return;
       }
+
+      if ("error" in data) {
+        closeStream();
+        setStage({ kind: "error", message: (data as { error: string }).error });
+        return;
+      }
+
+      const ev = data as Exclude<StreamEvent, { error: string }>;
+
+      if (ev.status === "processing") {
+        if (duringExtraction) return; // already showing transcript — wait for "completed"
+        closeStream();
+        setReviewText(ev.transcript);
+        setExtractResult(null);
+        setExtractError(null);
+        setAppended(false);
+        setStage({ kind: "review", id: dictationId, transcript: ev.transcript });
+        return;
+      }
+
+      if (ev.status === "completed") {
+        closeStream();
+        setExtracting(false);
+        setStage({
+          kind: "active",
+          id: dictationId,
+          status: {
+            id: dictationId,
+            storyId,
+            status: "completed",
+            transcript: ev.transcript,
+            wordCount: ev.wordCount,
+            durationSeconds: null,
+            summary: ev.summary,
+            processedAt: null,
+          },
+        });
+        emitWorldChanged(storyId);
+        return;
+      }
+
+      if (ev.status === "failed") {
+        closeStream();
+        setStage({ kind: "error", message: "Transcription failed" });
+        return;
+      }
+
+      // pending — update the active stage so the spinner stays visible
+      setStage({
+        kind: "active",
+        id: dictationId,
+        status: {
+          id: dictationId,
+          storyId,
+          status: "pending",
+          transcript: null,
+          wordCount: null,
+          durationSeconds: null,
+          summary: null,
+          processedAt: null,
+        },
+      });
     };
-    void tick();
-    pollRef.current = setInterval(tick, 3000);
+
+    es.onerror = () => {
+      closeStream();
+      setStage({ kind: "error", message: "Connection lost — please try again" });
+    };
   };
 
   const uploadAudio = async (blob: Blob, mimeType: string) => {
     setStage({ kind: "uploading" });
-    clearPoll();
+    closeStream();
     const form = new FormData();
     form.append("storyId", storyId);
     form.append(
@@ -116,7 +172,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
         "/api/dictations",
         { method: "POST", body: form },
       );
-      poll(dictationId);
+      startStream(dictationId);
     } catch (err) {
       setStage({ kind: "error", message: (err as Error).message });
     }
@@ -126,7 +182,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
     event.preventDefault();
     if (!text.trim()) return;
     setStage({ kind: "uploading" });
-    clearPoll();
+    closeStream();
     try {
       const { dictationId } = await fetchJson<{ dictationId: string }>(
         `/api/stories/${encodeURIComponent(storyId)}/extract-text`,
@@ -140,7 +196,7 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
         },
       );
       setText("");
-      poll(dictationId);
+      startStream(dictationId);
     } catch (err) {
       setStage({ kind: "error", message: (err as Error).message });
     }
@@ -150,9 +206,10 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
     if (stage.kind !== "review") return;
     setExtracting(true);
     setExtractError(null);
+    const dictationId = stage.id;
     try {
-      const result = await fetchJson<{ summary: string | null }>(
-        `/api/dictations/${encodeURIComponent(stage.id)}/extract`,
+      await fetchJson<unknown>(
+        `/api/dictations/${encodeURIComponent(dictationId)}/extract`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -162,17 +219,17 @@ export default function TalkWidget({ storyId }: { storyId: string }) {
           }),
         },
       );
-      setExtractResult(result.summary ?? "No changes");
-      emitWorldChanged(storyId);
+      // Re-open the stream; skip "processing" events since we already have the transcript.
+      startStream(dictationId, true);
     } catch (err) {
       setExtractError((err as Error).message);
-    } finally {
       setExtracting(false);
     }
+    // extracting spinner cleared when SSE delivers the terminal event
   };
 
   const reset = () => {
-    clearPoll();
+    closeStream();
     setStage({ kind: "idle" });
     setAppended(false);
     setExtractResult(null);
