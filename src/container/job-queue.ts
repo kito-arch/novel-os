@@ -1,5 +1,18 @@
 export type JobStatus = "queued" | "processing" | "completed" | "failed";
 
+// AssemblyAI's free tier permits 5 concurrent transcription jobs. The
+// transcription worker's maxConcurrency must not exceed this value or
+// submissions will be rejected with a 429. Upgrade the AssemblyAI plan
+// before raising this constant.
+export const ASSEMBLYAI_MAX_CONCURRENT = 5;
+
+export interface TranscriptionJob {
+  dictationId: string;
+  audioKey: string;   // S3 key (prod) or local path (dev) written by AudioStorage.save()
+  mimeType: string;
+  webhookUrl: string; // assembled from request origin at enqueue time
+}
+
 export interface ExtractionJob {
   dictationId: string;
   storyId: string;

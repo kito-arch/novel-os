@@ -31,10 +31,11 @@ interface SqsMessage {
   jobName: string;
 }
 
-// In-process fallback queue for dev: processes jobs synchronously through the
-// same maxConcurrency bound. Lives here (not tests/mocks) because it is a
-// reachable branch of the production adapter, not a test double.
-class InProcessQueue {
+// In-process fallback queue for dev: processes jobs asynchronously (fire-and-
+// forget) to mirror production SQS behaviour. Lives here (not tests/mocks)
+// because it is a reachable branch of the production adapter, not a test double.
+// Exported as InMemoryJobQueue for direct use when no SQS URL is configured.
+export class InMemoryJobQueue implements JobQueue {
   private readonly completed = new Map<string, CompletedHandler>();
   private readonly failed = new Map<string, FailedHandler>();
   private readonly status = new Map<string, JobStatus>();
@@ -47,26 +48,28 @@ class InProcessQueue {
     this.failed.set(name, handler);
   }
 
-  async enqueue<T>(jobName: string, data: T): Promise<{ jobId: string }> {
+  enqueue<T>(jobName: string, data: T): Promise<{ jobId: string }> {
     const jobId = `local-${Math.random().toString(36).slice(2)}`;
     this.status.set(jobId, "processing");
     const handler = this.completed.get(jobName);
     if (!handler) {
       this.status.set(jobId, "queued");
-      return { jobId };
+      return Promise.resolve({ jobId });
     }
-    try {
-      await handler(data);
-      this.status.set(jobId, "completed");
-    } catch (error) {
-      const failed = this.failed.get(jobName);
-      if (failed) await failed(data, error as Error);
-      this.status.set(jobId, "failed");
-    }
-    return { jobId };
+    // Fire-and-forget: mirrors production SQS behaviour where enqueue returns
+    // immediately and the consumer processes the message asynchronously.
+    void handler(data).then(
+      () => { this.status.set(jobId, "completed"); },
+      async (error) => {
+        const failed = this.failed.get(jobName);
+        if (failed) await failed(data, error as Error);
+        this.status.set(jobId, "failed");
+      },
+    );
+    return Promise.resolve({ jobId });
   }
 
-  getStatus(jobId: string): JobStatus {
+  async getStatus(jobId: string): Promise<JobStatus> {
     return this.status.get(jobId) ?? "queued";
   }
 }
@@ -96,7 +99,7 @@ export class SqsJobQueue implements JobQueue {
   private readonly pendingAcquires: Array<() => void> = [];
   private running = false;
   private polling: Promise<void> | undefined;
-  private fallback: InProcessQueue | null = null;
+  private fallback: InMemoryJobQueue | null = null;
 
   constructor(options: SqsJobQueueOptions) {
     this.queueUrl = options.queueUrl;
@@ -164,7 +167,7 @@ export class SqsJobQueue implements JobQueue {
       `[SqsJobQueue] SQS connection failed (${error instanceof Error ? error.message : String(error)}); ` +
         "falling back to the in-process queue for local dev.",
     );
-    this.fallback = new InProcessQueue();
+    this.fallback = new InMemoryJobQueue();
     for (const [name, handler] of this.completed) this.fallback.onJobCompleted(name, handler);
     for (const [name, handler] of this.failed) this.fallback.onJobFailed(name, handler);
     return this.fallback.enqueue(jobName, data);

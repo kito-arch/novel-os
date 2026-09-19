@@ -11,8 +11,10 @@ import {
   createLanguageModel,
   openaiLlm,
 } from "@/adapters";
+import { getAudioStorage } from "@/server/audio-storage";
 import { PostgresStoryWorldStore, PostgresTranscriptStore } from "@/adapters/postgres";
 import { SqsJobQueue } from "@/adapters/sqs";
+import { ASSEMBLYAI_MAX_CONCURRENT } from "@/container/job-queue";
 import { TranscriptProcessor } from "@/services/llm-agent/transcript-processor";
 import { askStory } from "@/services/reasoning/ask";
 import { checkContinuity } from "@/services/reasoning/continuity";
@@ -106,30 +108,57 @@ export function buildContainer(config: AppConfig = loadConfig()): TypedContainer
       );
     });
   }
-  if (config.SQS_QUEUE_URL) {
-    container
-      .bind("JOB_QUEUE")
-      .toValue(
-        new SqsJobQueue({
-          queueUrl: config.SQS_QUEUE_URL,
-          client: new SQSClient({
-            region: config.AWS_REGION,
-            ...(config.AWS_ACCESS_KEY_ID && config.AWS_SECRET_ACCESS_KEY
-              ? { credentials: { accessKeyId: config.AWS_ACCESS_KEY_ID, secretAccessKey: config.AWS_SECRET_ACCESS_KEY } }
-              : {}),
-          }),
-          maxConcurrency: 10,
-          resilience: "local-fallback",
-          logger: (line) => console.warn(line),
-        }),
-      );
+  const sqsClient = (): SQSClient =>
+    new SQSClient({
+      region: config.AWS_REGION,
+      ...(config.AWS_ACCESS_KEY_ID && config.AWS_SECRET_ACCESS_KEY
+        ? { credentials: { accessKeyId: config.AWS_ACCESS_KEY_ID, secretAccessKey: config.AWS_SECRET_ACCESS_KEY } }
+        : {}),
+    });
+
+  // Transcription queue — maxConcurrency capped at the AssemblyAI concurrent-
+  // transcription limit (see ASSEMBLYAI_MAX_CONCURRENT in job-queue.ts).
+  // Configure Lambda reserved concurrency to the same value so the cap is
+  // enforced at the invocation level.
+  if (config.SQS_TRANSCRIPTION_QUEUE_URL) {
+    container.bind("TRANSCRIPTION_QUEUE").toValue(
+      new SqsJobQueue({
+        queueUrl: config.SQS_TRANSCRIPTION_QUEUE_URL,
+        client: sqsClient(),
+        maxConcurrency: ASSEMBLYAI_MAX_CONCURRENT,
+        resilience: "strict",
+        logger: (line) => console.warn(line),
+      }),
+    );
   } else {
-    container.bind("JOB_QUEUE").toFactory(() => {
+    container.bind("TRANSCRIPTION_QUEUE").toFactory(() => {
       throw new NotImplementedError(
-        "JOB_QUEUE requires the SQS adapter (Phase 11, T11.1) — set SQS_QUEUE_URL (and AWS_REGION) to enable it.",
+        "TRANSCRIPTION_QUEUE requires SQS_TRANSCRIPTION_QUEUE_URL (and AWS_REGION) to be set.",
       );
     });
   }
+
+  // Extraction queue — no hard external cap; tune maxConcurrency and Lambda
+  // reserved concurrency to your LLM provider's rate limits and cost tolerance.
+  if (config.SQS_EXTRACTION_QUEUE_URL) {
+    container.bind("EXTRACTION_QUEUE").toValue(
+      new SqsJobQueue({
+        queueUrl: config.SQS_EXTRACTION_QUEUE_URL,
+        client: sqsClient(),
+        maxConcurrency: 10,
+        resilience: "strict",
+        logger: (line) => console.warn(line),
+      }),
+    );
+  } else {
+    container.bind("EXTRACTION_QUEUE").toFactory(() => {
+      throw new NotImplementedError(
+        "EXTRACTION_QUEUE requires SQS_EXTRACTION_QUEUE_URL (and AWS_REGION) to be set.",
+      );
+    });
+  }
+
+  container.bind("AUDIO_STORAGE").toFactory(() => getAudioStorage());
 
   // --- Reasoning services (Phases 6–7) -------------------------------------
   // Plain functions closed over the resolved stores + LlmClient port. Lazy

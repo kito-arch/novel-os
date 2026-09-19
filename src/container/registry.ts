@@ -1,4 +1,5 @@
 import type { AppConfig } from "../config";
+import type { AudioStorage } from "../server/audio-storage";
 import type { TranscriptProcessor } from "../services/llm-agent/transcript-processor";
 import type { AskStory } from "../services/reasoning/ask";
 import type { ContinuityChecker } from "../services/reasoning/continuity";
@@ -21,9 +22,11 @@ export type AppRegistry = {
   CONFIG: AppConfig;
   STT: SpeechToText;
   LLM: LlmClient;
+  AUDIO_STORAGE: AudioStorage;
   STORY_WORLD_STORE: StoryWorldStore;
   TRANSCRIPT_STORE: TranscriptStore;
-  JOB_QUEUE: JobQueue;
+  TRANSCRIPTION_QUEUE: JobQueue;
+  EXTRACTION_QUEUE: JobQueue;
   CLOCK: Clock;
   TRANSCRIPT_PROCESSOR: TranscriptProcessor;
   // Reasoning layer (Phases 6–7): bound services backing the ask/analyze/
