@@ -171,6 +171,7 @@ export class TranscriptProcessor {
       "- Never fictionalize; if the text is silent, do not invent.",
       "- ENTITY QUALITY: Only create entities for named, recurring, story-significant people, places, or objects. Do NOT create entities for incidental props or background details (a branch, a door, a sound, a bush, a moonlit sky). If something is mentioned once in passing and has no story significance beyond that moment, skip it.",
       "- ALIAS CONFLICTS: Before creating a new character/entity, check if an existing entity's name or aliases already match any name you intend to use (including the new entity's aliases). If so, use stage_update_entity on the existing entity instead of creating a duplicate.",
+      "- DIALOGUE: When the transcript contains direct speech without quotation marks (e.g. \"Richard said let's play together\"), treat it as direct dialogue and use proper double quotes in any fact, event, or knowledge you stage (e.g. Richard said \"let's play together\").",
       "",
       `BUDGET: at most ${MAX_TOOL_CALLS} tool calls and ${MAX_FETCHES} entity fetches per chunk. get_entities clamps each call to ${Math.min(200, MAX_FETCHES)} rows.`,
       "",
