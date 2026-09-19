@@ -1,13 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { TranscriptionJob } from "@/container/job-queue";
 import { resolveContainer } from "@/server/app-container";
 import { requireAuth } from "@/server/auth";
 import { jsonError } from "@/server/http";
 
-// T12.1 — Dictation upload. multipart/form-data: `audio` file + `storyId`.
-// The owning user comes from the session header (never the form/webhook).
-// The webhook URL is assembled with NO query params; the AssemblyAI
-// transcript_id returned by submitTranscription is persisted as providerJobId
-// so the callback (T12.10) can correlate the dictation by transcript_id only.
+// Dictation upload. multipart/form-data: `audio` file + `storyId`.
+// The audio is stored via AUDIO_STORAGE (S3 in prod, local disk in dev) and a
+// "transcription" job is enqueued so the worker submits it to AssemblyAI within
+// the ASSEMBLYAI_MAX_CONCURRENT concurrency cap. The HTTP response returns
+// immediately — transcription is fully async; clients subscribe to
+// GET /api/dictations/[id]/stream for status updates.
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
@@ -22,28 +24,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const container = resolveContainer();
-  const config = container.get("CONFIG");
   const buffer = Buffer.from(await file.arrayBuffer());
-  const mimeType = file.type || "application/octet-stream";
-  const webhookUrl = `${request.nextUrl.origin}/api/hooks/stt-callback`;
+  const mimeType = file.type || "audio/webm";
+
+  const { url: audioUrl, key: audioKey } = await container
+    .get("AUDIO_STORAGE")
+    .save(buffer, mimeType, { userId, storyId });
 
   const transcriptStore = container.get("TRANSCRIPT_STORE");
   const dictationId = await transcriptStore.saveDictation({
     storyId,
     userId,
     status: "pending",
-    audioUrl: file.name || undefined,
+    audioUrl,
   });
 
-  const { jobId } = await container.get("STT").submitTranscription({
-    audioBuffer: buffer,
-    mimeType,
-    webhookUrl,
-    webhookAuth: config.WEBHOOK_SECRET
-      ? { headerName: "x-webhook-secret", headerValue: config.WEBHOOK_SECRET }
-      : undefined,
-  });
-  await transcriptStore.updateDictation(dictationId, { providerJobId: jobId });
+  const webhookUrl = `${request.nextUrl.origin}/api/hooks/stt-callback`;
+  const job: TranscriptionJob = { dictationId, audioKey, mimeType, webhookUrl };
+  await container.get("TRANSCRIPTION_QUEUE").enqueue("transcription", job);
 
-  return NextResponse.json({ dictationId, jobId });
+  return NextResponse.json({ dictationId });
 }
